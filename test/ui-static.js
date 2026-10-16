@@ -125,6 +125,37 @@ for (const token of ['--bg', '--text', '--accent', '--border', '--surface']) {
   check(`${token} is declared for both themes (${declared} definitions)`, declared >= 2);
 }
 
+/* ---------------- the working indicator ---------------- */
+// It only exists between sending and the first token, so it cannot be caught by
+// the browser suite without deliberately stalling a provider. These static
+// checks cover the parts that are easy to break silently.
+check('the working indicator renders three real dot elements',
+  /class="tr-dots"[\s\S]{0,200}<circle/.test(app), 'dots must not come from <use>');
+// A <use> renders into a shadow tree, so the staggered animation could neither
+// be measured nor relied upon. Inline circles are the whole reason this works.
+check('the indicator does not pull its dots from the icon sprite',
+  !/tr-dots[\s\S]{0,80}href="#i-dots"/.test(app));
+check('the indicator has a label hook for phase updates', /data-thinking-label/.test(app));
+
+for (const keyframes of ['think-breathe', 'think-dot', 'think-sheen']) {
+  check(`the ${keyframes} animation is defined`, new RegExp(`@keyframes ${keyframes}`).test(css));
+}
+
+// Without transform-box the circles scale about the SVG origin, not their own
+// centres, so the dots fly out of the viewBox instead of pulsing. This was a
+// real bug, and it is invisible in a static screenshot.
+check('the pulsing dots scale about their own centres',
+  /\.tr-dots circle\s*\{[^}]*transform-box:\s*fill-box/.test(css),
+  'transform-box: fill-box is required for SVG child transforms');
+check('the dots carry staggered delays so they do not move as one blob',
+  /tr-dots circle:nth-child\(2\)/.test(css) && /tr-dots circle:nth-child\(3\)/.test(css));
+check('the indicator is disabled under prefers-reduced-motion',
+  /prefers-reduced-motion[\s\S]{0,600}tr-dots circle/.test(css));
+// The sheen needs background-clip: text; without it the label renders invisible
+// because the fill is transparent.
+check('the label shimmer keeps the text visible',
+  /-webkit-text-fill-color:\s*transparent/.test(css) && /background-clip:\s*text/.test(css));
+
 /* ---------------- api surface ---------------- */
 for (const route of ['/api/chat', '/api/settings', '/api/chats', '/api/models', '/api/info', '/api/fs']) {
   check(`the client calls ${route}`, app.includes(`'${route}`) || app.includes(`\`${route}`) || app.includes(`${route}/`));

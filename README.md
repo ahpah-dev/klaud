@@ -1,6 +1,6 @@
 # Klaud
 
-**v1.0** — a local coding agent with a built-in list of **genuinely free, no-card
+**v1.0.1** — a local coding agent with a built-in list of **genuinely free, no-card
 OpenAI-compatible providers**. It reads and writes real files on your machine,
 runs real commands, and verifies its own work — behind a warm, paper-like
 interface.
@@ -9,6 +9,8 @@ Bring your own key, or bring no key at all. Nothing else to install: no npm
 packages, no build step, no database. Node 18+ and the standard library.
 
 ![Klaud's empty state — cream sidebar, near-white canvas, centred greeting and prompt box](docs/screenshots/screenshot-welcome.png)
+
+![Klaud working — an animated indicator while the model is thinking](docs/screenshots/screenshot-thinking.png)
 
 ```
   ◆ Klaud  local coding agent
@@ -187,7 +189,6 @@ and run it again — up to the step limit you configure.
 A model that keeps asking for the same thing is the classic failure of a tool
 loop, and it is worst on the free tiers this app targets. Klaud guards against it
 in the loop itself rather than trusting the model to notice:
-
 - **Identical calls are refused.** A repeat of a call already made this turn is
   answered with the earlier result and a warning; a second repeat is blocked
   outright. Calls with *different* arguments are untouched — that is real work.
@@ -212,6 +213,14 @@ in the loop itself rather than trusting the model to notice:
   against a per-minute free tier just burns every attempt and reports a failure
   that would have cleared on its own. A wait longer than a minute fails fast with
   the reason instead of appearing to hang.
+
+- **A wait never looks like a hang.** Between sending and the first token the
+  transcript used to be blank, which on a slow free tier is the longest part of
+  the turn. There is now a working indicator — a breathing mark, three dots
+  pulsing in sequence, and a sheen across the label — that names the phase
+  ("Thinking · step 2/4", "Running run_command", "Reasoning") and appears again
+  after each tool result, while the model reads it. It is disabled under
+  `prefers-reduced-motion`, which leaves a static row rather than a blank one.
 
 ### Permissions
 
@@ -383,7 +392,7 @@ Everything under `/api/*` needs the `x-klaud-token` header.
 npm test
 ```
 
-601 checks in total, no test framework, no dependencies. Every suite is
+611 checks in total, no test framework, no dependencies. Every suite is
 self-contained: they spawn their own servers on throwaway data directories, so
 running the tests can never disturb your real configuration.
 
@@ -391,7 +400,7 @@ running the tests can never disturb your real configuration.
 | --- | --- | --- |
 | `test/run.js` | 108 | Tool sandbox, shell exit codes, LLM client, agent loop, **loop detection**, reasoning-effort wire format, retry timing, history pruning |
 | `test/markdown.mjs` | 29 | Markdown rendering and HTML escaping |
-| `test/ui-static.js` | 28 | Element ids, icon sprite, CSS coverage, module wiring |
+| `test/ui-static.js` | 38 | Element ids, icon sprite, CSS coverage, module wiring, working-indicator animations |
 | `test/cloudflare-token.mjs` | 16 | Account IDs are read from every token claim shape, and never guessed |
 | `test/cloudflare-setup.js` | 42 | The setup path against a stand-in Cloudflare API, including empty account lists |
 | `test/cloudflare-errors.js` | 51 | Every Cloudflare failure explains itself; a bare "unknown" is impossible |

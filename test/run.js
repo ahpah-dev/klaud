@@ -394,6 +394,18 @@ function startMockProvider() {
       return;
     }
 
+    if (state.scenario === 'slow_first_token') {
+      // Says nothing for a while, then answers. This is the gap the working
+      // indicator fills, and it is otherwise impossible to observe.
+      setTimeout(() => {
+        write({ model: 'mock-large', choices: [{ index: 0, delta: { content: 'Eventually.' } }] });
+        write({ model: 'mock-large', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] });
+        res.write('data: [DONE]\n\n');
+        res.end();
+      }, 6000);
+      return;
+    }
+
     if (state.scenario === 'slow') {
       write({ choices: [{ index: 0, delta: { content: 'thinking' } }] });
       // Deliberately never finishes: the client is expected to abort.

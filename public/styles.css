@@ -1007,6 +1007,115 @@ details.tool + .prose {
   50% { opacity: 0; }
 }
 
+/* ---------------------- working indicator -------------------------------- */
+
+/**
+ * Shown between sending and the first token, where the column used to be blank.
+ *
+ * The three parts move at different rates on purpose — the mark breathes, the
+ * dots ripple, the label shimmers — so a long wait reads as "working" rather
+ * than as a stalled progress bar. Every animation is 1.6s or slower, which is
+ * calm enough to sit on screen for a minute on a slow free tier.
+ */
+.thinking-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 3px 0 5px;
+  color: var(--text-3);
+}
+
+.thinking-row .tr-mark {
+  display: grid;
+  place-items: center;
+  flex: none;
+  color: var(--accent);
+  animation: think-breathe 2.2s var(--ease) infinite;
+}
+
+.thinking-row .tr-mark svg {
+  width: 17px;
+  height: 17px;
+}
+
+.thinking-row .tr-dots {
+  flex: none;
+  width: 26px;
+  height: 13px;
+  fill: currentColor;
+  color: var(--accent);
+  overflow: visible;
+}
+
+/* Each dot pulses in turn. The delays are the whole effect: without an offset
+   the three circles move together and read as one blob.
+   `transform-box: fill-box` is required, not optional — without it
+   `transform-origin: center` resolves against the SVG's own coordinate system
+   rather than each circle, so scaling a dot at cx=20 moves it instead of
+   growing it in place. */
+.thinking-row .tr-dots circle {
+  animation: think-dot 1.4s var(--ease) infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.thinking-row .tr-dots circle:nth-child(2) { animation-delay: 0.16s; }
+.thinking-row .tr-dots circle:nth-child(3) { animation-delay: 0.32s; }
+
+.thinking-row .tr-label {
+  font-size: 12.5px;
+  letter-spacing: 0.01em;
+  /* A slow sheen travelling across the text. `background-clip: text` needs the
+     fill to be transparent, so the colour moves to the gradient. */
+  background: linear-gradient(
+    90deg,
+    var(--text-3) 0%,
+    var(--text-3) 38%,
+    var(--text) 50%,
+    var(--text-3) 62%,
+    var(--text-3) 100%
+  );
+  background-size: 260% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: think-sheen 2.4s linear infinite;
+}
+
+@keyframes think-breathe {
+  0%, 100% { opacity: 0.45; transform: scale(0.94); }
+  50% { opacity: 1; transform: scale(1); }
+}
+
+@keyframes think-dot {
+  0%, 100% { opacity: 0.32; transform: scale(0.8); }
+  40% { opacity: 1; transform: scale(1.08); }
+}
+
+@keyframes think-sheen {
+  from { background-position: 130% 0; }
+  to { background-position: -130% 0; }
+}
+
+/* Someone who asked for less motion gets a static row, not a blank one. */
+@media (prefers-reduced-motion: reduce) {
+  .thinking-row .tr-mark,
+  .thinking-row .tr-dots circle,
+  .thinking-row .tr-label {
+    animation: none;
+  }
+
+  .thinking-row .tr-label {
+    -webkit-text-fill-color: currentColor;
+    color: var(--text-3);
+    background: none;
+  }
+
+  .thinking-row .tr-dots circle {
+    opacity: 0.75;
+  }
+}
+
 /* --------------------------- thinking panel ------------------------------ */
 
 .thinking {

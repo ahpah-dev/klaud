@@ -354,6 +354,32 @@ function renderToolCard(call) {
     </details>`;
 }
 
+/**
+ * The row shown while the model is working but has not said anything yet.
+ *
+ * Without this a turn starts as a blank column: the assistant block has no text,
+ * no reasoning and no tool card, so `renderBlock` had nothing to return and the
+ * user saw nothing at all until the first token arrived. That is worst on a slow
+ * free tier, where the wait is the longest.
+ *
+ * The three dots are written out as real `<circle>` elements rather than pulled
+ * in from the icon sprite with `<use>`. A `<use>` renders its target inside a
+ * shadow tree, which cannot be queried or measured from the page, so the
+ * staggered animation could neither be verified nor safely relied upon.
+ *
+ * `data-phase` drives the label text; the caller updates that in place rather
+ * than re-rendering, so the animation never restarts mid-wait.
+ */
+function thinkingRow(label = 'Thinking') {
+  return `<div class="thinking-row" data-thinking aria-live="polite">
+    <span class="tr-mark">${icon('i-mark')}</span>
+    <svg class="tr-dots" viewBox="0 0 24 12" aria-hidden="true">
+      <circle cx="4" cy="6" r="2.4" /><circle cx="12" cy="6" r="2.4" /><circle cx="20" cy="6" r="2.4" />
+    </svg>
+    <span class="tr-label" data-thinking-label>${escapeHtml(label)}</span>
+  </div>`;
+}
+
 function renderBlock(block) {
   if (block.kind === 'user') {
     return `<div class="turn user"><div class="bubble-user">${escapeHtml(block.text)}</div></div>`;
@@ -410,7 +436,29 @@ function renderBlock(block) {
     }
   }
 
-  if (!parts.length) return '';
+  // Nothing to show yet: this is the gap the indicator fills. Returning '' here
+  // is what produced the blank column.
+  const isCurrent = block === currentTurn();
+  const trailing = (block.items || [])[block.items.length - 1];
+  // A wait can also happen *after* a tool result, while the model reads it and
+  // decides what to do next. Text streaming already shows a live cursor, so the
+  // indicator is only added when the last thing on screen is a finished tool
+  // card or a reasoning panel — otherwise there would be two live indicators.
+  const waitingAfterWork =
+    state.streaming &&
+    isCurrent &&
+    parts.length > 0 &&
+    trailing &&
+    trailing.type !== 'text' &&
+    !(trailing.type === 'tool' && trailing.running);
+
+  if (!parts.length) {
+    // Nothing streamed yet. The indicator carries its own mark, so rendering the
+    // role header too would stack three of them down the left edge: the empty
+    // role row, the mark in the row, and the indicator. One row is enough.
+    if (state.streaming || block.working) return `<div class="turn assistant">${thinkingRow()}</div>`;
+    return '';
+  }
 
   let note = '';
   if (state.streaming && state.steps.max) {
@@ -419,6 +467,8 @@ function renderBlock(block) {
       note = state.steps.max > 1 ? `step ${state.steps.index}/${state.steps.max}` : 'working';
     }
   }
+
+  if (waitingAfterWork) parts.push(thinkingRow('Thinking'));
 
   return `<div class="turn assistant">${roleHeader(state.config?.model || 'assistant', note)}<div class="block-body">${parts.join('')}</div></div>`;
 }
@@ -458,6 +508,19 @@ function patchToolCard(call) {
   const wasOpen = node.open;
   fresh.open = wasOpen || call.ok === false;
   node.replaceWith(fresh);
+
+  // A finished tool call is followed by another wait while the model reads the
+  // result, so the trailing working indicator has to appear now. Patching only
+  // the card left that second wait blank.
+  const current = currentTurn();
+  const trailing = current?.items?.[current.items.length - 1];
+  const needsIndicator = state.streaming && !call.running && trailing && trailing.type !== 'text';
+  if (needsIndicator && !dom.messages.querySelector('[data-thinking]')) {
+    const body = fresh.closest('.block-body');
+    if (body) body.insertAdjacentHTML('beforeend', thinkingRow());
+  } else if (!needsIndicator) {
+    dom.messages.querySelector('[data-thinking]')?.remove();
+  }
   scrollToBottom();
 }
 
@@ -734,6 +797,13 @@ async function submit() {
   scrollToBottom(true);
   setStreaming(true);
 
+  // Open the assistant block before the request goes out. Without this the
+  // column stays empty until the first event arrives, which on a slow provider
+  // is several seconds of nothing — the blank the indicator exists to fill.
+  ensureTurn();
+  renderTranscript();
+  scrollToBottom(true);
+
   const turnId = crypto.randomUUID().replace(/-/g, '');
   state.turnId = turnId;
   const controller = new AbortController();
@@ -809,6 +879,19 @@ async function consumeStream(body, turnId) {
   if (!turnEnded) closeOpenStreams();
 }
 
+/**
+ * Retitle the working indicator in place.
+ *
+ * Deliberately not a re-render: replacing the node restarts the pulse animation,
+ * so a turn that changes phase several times would flicker. This only touches the
+ * label text, and the dots keep their rhythm.
+ */
+function setThinkingPhase(label) {
+  const node = dom.messages.querySelector('[data-thinking-label]');
+  if (!node) return;
+  if (node.textContent !== label) node.textContent = label;
+}
+
 function handleEvent(event, turnId) {
   switch (event.type) {
     case 'turn_start':
@@ -818,6 +901,7 @@ function handleEvent(event, turnId) {
 
     case 'step':
       state.steps = { index: event.index, max: event.max };
+      setThinkingPhase(state.steps.max > 1 ? `Thinking · step ${event.index}/${event.max}` : 'Thinking');
       renderChrome();
       return false;
 
@@ -826,6 +910,7 @@ function handleEvent(event, turnId) {
       return false;
 
     case 'reasoning':
+      setThinkingPhase('Reasoning');
       pushReasoning(event.value);
       return false;
 
@@ -856,6 +941,9 @@ function handleEvent(event, turnId) {
           call.result = event.output;
           call.durationMs = event.durationMs;
           call.denied = Boolean(event.denied);
+          setThinkingPhase('Thinking');
+        } else {
+          setThinkingPhase(`Running ${event.name}`);
         }
         patchToolCard(call);
       }
