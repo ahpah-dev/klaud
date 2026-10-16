@@ -233,13 +233,24 @@ async function startIsolatedServer() {
   check('bad token is rejected with 401', noAuth.status === 401);
 
   const info = await api(token, '/api/info');
-  check('GET /api/info lists the tools', info.status === 200 && info.payload.tools.length >= 9,
+  check('GET /api/info lists the tools', info.status === 200 && info.payload.tools.length > 0,
     JSON.stringify(info.payload).slice(0, 200));
 
   const tools = (info.payload.tools || []).map((t) => t.name);
   for (const expected of ['read_file', 'write_file', 'edit_file', 'run_command', 'search_text', 'glob_files']) {
     check(`tool catalogue exposes ${expected}`, tools.includes(expected));
   }
+
+  /* The extension tools are registered when a turn runs, so on a freshly started
+   * server the catalogue used to report the nine built-ins while the agent
+   * actually had twelve. Asserting a lower bound of 9 is what let that through;
+   * the endpoint now registers before reporting, and this demands the real set. */
+  for (const expected of ['list_skills', 'read_skill', 'task']) {
+    check(`the info catalogue includes the extension tool ${expected} before any turn has run`,
+      tools.includes(expected), tools.join(', '));
+  }
+  check('the catalogue reports every tool, not only the built-ins',
+    info.payload.tools.length >= 12, `${info.payload.tools.length} tools: ${tools.join(', ')}`);
 
   // --- settings ---
   // Snapshot first: this suite changes the provider config, and it must hand
@@ -400,7 +411,7 @@ async function startIsolatedServer() {
 
   const afterOdd = await api(token, '/api/info');
   check('it still answers authenticated requests afterwards',
-    afterOdd.status === 200 && (afterOdd.payload.tools || []).length >= 9, String(afterOdd.status));
+    afterOdd.status === 200 && (afterOdd.payload.tools || []).length >= 12, String(afterOdd.status));
 
   await fs.rm(proof, { force: true });
   await restore();

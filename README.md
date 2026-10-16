@@ -1,6 +1,6 @@
 # Klaud
 
-**v1.0.2** — a local coding agent with a built-in list of **genuinely free, no-card
+**v1.0.3** — a local coding agent with a built-in list of **genuinely free, no-card
 OpenAI-compatible providers**. It reads and writes real files on your machine,
 runs real commands, and verifies its own work — behind a warm, paper-like
 interface.
@@ -527,7 +527,7 @@ Everything under `/api/*` needs the `x-klaud-token` header.
 npm test
 ```
 
-1076 checks in total, no test framework, no dependencies. Every suite is
+1080 checks in total, no test framework, no dependencies. Every suite is
 self-contained: they spawn their own servers on throwaway data directories, so
 running the tests can never disturb your real configuration.
 
@@ -544,7 +544,7 @@ running the tests can never disturb your real configuration.
 | `test/cloudflare-setup.js` | 42 | The setup path against a stand-in Cloudflare API, including empty account lists |
 | `test/cloudflare-errors.js` | 51 | Every Cloudflare failure explains itself; a bare "unknown" is impossible |
 | `test/providers.js` | 79 | Catalogue honesty, the NVIDIA recommendation, live lookups, no silent config changes |
-| `test/e2e-http.js` | 37 | The full HTTP and SSE API, plus malformed-request resilience |
+| `test/e2e-http.js` | 41 | The full HTTP and SSE API, malformed-request resilience, and that the tool catalogue reports every tool before a turn has run |
 | `test/auth-recovery.js` | 21 | A stale session token can be recovered with one click |
 | `test/folder-picker.js` | 30 | Typing a path, creating a folder, switching workspace |
 | `test/browser.js` | 209 | The app driven in headless Chrome, start to finish: no accent ring on a mouse click, the Chat/Cowork toggle and its persisted mode, the Cowork empty state, and **the diff reader** — a wrong diff is worse than none, so it is asserted rather than only photographed |

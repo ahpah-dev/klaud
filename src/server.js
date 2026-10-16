@@ -21,6 +21,7 @@ const {
   resetExtensions,
   collectExtensions,
   listInvocableSkills,
+  registerExtensionTools,
   load: loadExtension,
 } = require('./extensions');
 
@@ -376,6 +377,11 @@ async function handleApi(req, res, url, pathname, { token, activeTurns }) {
   if (pathname === '/api/info' && method === 'GET') {
     const settings = await store.loadSettings();
     const shell = detectShell();
+    /* Registration normally happens on the first turn, so on a freshly started
+     * server the catalog would report only the nine built-ins while the agent
+     * actually had twelve. Anything that lists the tools has to trigger the
+     * registration itself rather than depend on a turn having run. */
+    registerExtensionTools();
     sendJson(res, 200, {
       app: 'klaud',
       version: require('../package.json').version,
@@ -421,6 +427,7 @@ async function handleApi(req, res, url, pathname, { token, activeTurns }) {
 
   if (pathname === '/api/extensions' && method === 'GET') {
     const current = await store.loadSettings();
+    registerExtensionTools();
     /* Reports what is actually loaded, not what could be. The UI shows this, so
        it must never claim a plugin is contributing something it is not: any
        component Klaud cannot run is surfaced as a warning by the plugins module
