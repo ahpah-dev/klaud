@@ -1,6 +1,6 @@
 # Klaud
 
-**v1.0.1** — a local coding agent with a built-in list of **genuinely free, no-card
+**v1.0.2** — a local coding agent with a built-in list of **genuinely free, no-card
 OpenAI-compatible providers**. It reads and writes real files on your machine,
 runs real commands, and verifies its own work — behind a warm, paper-like
 interface.
@@ -8,9 +8,28 @@ interface.
 Bring your own key, or bring no key at all. Nothing else to install: no npm
 packages, no build step, no database. Node 18+ and the standard library.
 
+### The greeting changes with the clock
+
+An empty chat says something different depending on the hour, so the app does not
+open with the same four words every single time. "Here we go!" is the anchor and
+appears throughout the day; the rest are occasional.
+
+| When | You might see |
+| --- | --- |
+| 05:00–10:59 | Coffee and Klaud time? · Morning. What are we building? · Fresh start? · Early. Good. |
+| 11:00–16:59 | What are we working on? · Right, what next? · Coffee and Klaud time? |
+| 17:00–22:59 | Evening thoughts? · Something to finish? · Evening. What is it? |
+| 23:00–04:59 | Late night coding? · Still at it? · One more thing? |
+
+It re-rolls on **New chat**, and a chat that is already open keeps the line it
+started with, so it never reshuffles under you. Each line has one phrase in the
+accent colour, and all of them are escaped rather than trusted.
+
 ![Klaud's empty state — cream sidebar, near-white canvas, centred greeting and prompt box](docs/screenshots/screenshot-welcome.png)
 
 ![Klaud working — an animated indicator while the model is thinking](docs/screenshots/screenshot-thinking.png)
+
+![A morning greeting](docs/screenshots/greeting-morning.png)
 
 ```
   ◆ Klaud  local coding agent
@@ -392,13 +411,13 @@ Everything under `/api/*` needs the `x-klaud-token` header.
 npm test
 ```
 
-611 checks in total, no test framework, no dependencies. Every suite is
+623 checks in total, no test framework, no dependencies. Every suite is
 self-contained: they spawn their own servers on throwaway data directories, so
 running the tests can never disturb your real configuration.
 
 | Suite | Checks | What it proves |
 | --- | --- | --- |
-| `test/run.js` | 108 | Tool sandbox, shell exit codes, LLM client, agent loop, **loop detection**, reasoning-effort wire format, retry timing, history pruning |
+| `test/run.js` | 120 | Tool sandbox, shell exit codes, LLM client, agent loop, **loop detection**, reasoning-effort wire format, retry timing, **time-of-day greeting**, history pruning |
 | `test/markdown.mjs` | 29 | Markdown rendering and HTML escaping |
 | `test/ui-static.js` | 38 | Element ids, icon sprite, CSS coverage, module wiring, working-indicator animations |
 | `test/cloudflare-token.mjs` | 16 | Account IDs are read from every token claim shape, and never guessed |

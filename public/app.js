@@ -90,6 +90,8 @@ const state = {
   usage: null,
   toolCount: 0,
   unauthorized: false,
+  // The greeting currently on screen, so a re-render does not reshuffle it.
+  greeting: null,
 };
 
 const el = (id) => document.getElementById(id);
@@ -241,14 +243,115 @@ function setEmptyShell(empty) {
   document.querySelector('.app')?.classList.toggle('is-empty', empty);
 }
 
+/**
+ * The greeting on an empty chat, chosen from the local clock.
+ *
+ * "Here we go!" is the anchor and appears throughout the day; the others are
+ * occasional, so the greeting feels alive without turning into a novelty every
+ * time. The weighting is deliberate: a time-specific line repeated on every new
+ * chat stops being charming after the third one, which is why each of them is a
+ * single entry in a pool that the anchor fills out.
+ *
+ * The hour is a parameter rather than a call to `new Date()` inside, so the
+ * buckets can actually be tested. The roll is a parameter too, for the same
+ * reason: `test/run.js` drives both and asserts the distribution.
+ *
+ * Returns { text, emphasis } where `emphasis` is the part rendered in the accent
+ * colour, or null. Kept as data rather than markup so the caller decides how to
+ * present it.
+ */
+const GREETING_BUCKETS = [
+  {
+    // Past 11pm. A different flavour of late: still working, or still awake.
+    name: 'late-night',
+    hours: [23, 0, 1, 2, 3, 4],
+    options: [
+      { text: 'Here we go!', emphasis: 'go' },
+      { text: 'Late night coding?', emphasis: 'Late night' },
+      { text: 'Still at it?', emphasis: 'Still' },
+      { text: 'Here we go!', emphasis: 'go' },
+      { text: 'One more thing?', emphasis: 'One more' },
+    ],
+  },
+  {
+    // Early, before the day has properly started.
+    name: 'morning',
+    hours: [5, 6, 7, 8, 9, 10],
+    options: [
+      { text: 'Here we go!', emphasis: 'go' },
+      { text: 'Coffee and Klaud time?', emphasis: 'Coffee' },
+      { text: 'Morning. What are we building?', emphasis: 'Morning' },
+      { text: 'Fresh start?', emphasis: 'Fresh' },
+      { text: 'Here we go!', emphasis: 'go' },
+      { text: 'Early. Good.', emphasis: 'Early' },
+    ],
+  },
+  {
+    // The long middle of the day, where most work happens.
+    name: 'midday',
+    hours: [11, 12, 13, 14, 15, 16],
+    options: [
+      { text: 'Here we go!', emphasis: 'go' },
+      { text: 'What are we working on?', emphasis: 'working' },
+      { text: 'Here we go!', emphasis: 'go' },
+      { text: 'Right, what next?', emphasis: 'next' },
+      { text: 'Here we go!', emphasis: 'go' },
+      { text: 'Coffee and Klaud time?', emphasis: 'Coffee' },
+    ],
+  },
+  {
+    // Evening, winding down or picking something up again.
+    name: 'evening',
+    hours: [17, 18, 19, 20, 21, 22],
+    options: [
+      { text: 'Here we go!', emphasis: 'go' },
+      { text: 'Evening thoughts?', emphasis: 'Evening' },
+      { text: 'Here we go!', emphasis: 'go' },
+      { text: 'Something to finish?', emphasis: 'finish' },
+      { text: 'Here we go!', emphasis: 'go' },
+      { text: 'Evening. What is it?', emphasis: 'Evening' },
+    ],
+  },
+];
+
+function greetingForHour(hour) {
+  const h = Number.isFinite(hour) ? ((Math.floor(hour) % 24) + 24) % 24 : 12;
+  return GREETING_BUCKETS.find((b) => b.hours.includes(h)) || GREETING_BUCKETS[2];
+}
+
+function pickGreeting(hour = new Date().getHours(), roll = Math.random()) {
+  const bucket = greetingForHour(hour);
+  const index = Math.min(
+    bucket.options.length - 1,
+    Math.max(0, Math.floor(roll * bucket.options.length))
+  );
+  return { ...bucket.options[index], bucket: bucket.name };
+}
+
+/** The `<em>` that carries the accent, or the plain text when there is none. */
+function greetingMarkup(greeting) {
+  const { text, emphasis } = greeting;
+  if (!emphasis) return escapeHtml(text);
+  const at = text.indexOf(emphasis);
+  if (at === -1) return escapeHtml(text);
+  return (
+    escapeHtml(text.slice(0, at)) +
+    `<em>${escapeHtml(emphasis)}</em>` +
+    escapeHtml(text.slice(at + emphasis.length))
+  );
+}
+
 function renderWelcome() {
   const hasKey = state.config?.hasApiKey;
   const ws = state.config?.workspace || '';
   setEmptyShell(true);
+  // Held on state so a re-render during the same empty chat — a reconnect, a
+  // settings change — does not reshuffle the greeting under the user.
+  if (!state.greeting) state.greeting = pickGreeting();
   dom.messages.innerHTML = `
     <div class="welcome">
       <svg class="mark" aria-hidden="true"><use href="#i-mark"/></svg>
-      <h1>Here we <em>go</em>!</h1>
+      <h1>${greetingMarkup(state.greeting)}</h1>
       ${
         hasKey
           ? ''
@@ -1164,6 +1267,9 @@ function newChat() {
   state.title = '';
   state.messages = [];
   state.blocks = [];
+  // A new chat is a new moment, so it earns a fresh greeting. The same chat
+  // keeps the one it started with.
+  state.greeting = null;
   state.usage = null;
   state.toolCount = 0;
   history.replaceState(null, '', location.pathname);

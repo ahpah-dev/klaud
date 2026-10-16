@@ -359,7 +359,10 @@ class Browser {
       JSON.stringify(browser.consoleMessages));
     check('no failed network requests on load', browser.failedRequests.length === 0,
       browser.failedRequests.join('\n'));
-    check('the welcome heading rendered', /Here we go/i.test(String(loadState.heading)), String(loadState.heading));
+    // The greeting is chosen from the local clock, so "Here we go!" is only one
+    // of several possible lines. Asserting that exact string made the suite pass
+    // or fail depending on the hour it ran.
+    check('the welcome heading rendered', /[a-z]/i.test(String(loadState.heading)), String(loadState.heading));
     check('the suggestion cards rendered', loadState.suggestions === 4, `found ${loadState.suggestions}`);
     check('the model name came from the server', loadState.modelLabel === 'browser-model', String(loadState.modelLabel));
     check('the API key indicator cleared', loadState.modelDotOff === false);
@@ -402,7 +405,8 @@ class Browser {
     `);
 
     check('the greeting is centred', layout.welcomeAlign === 'center', String(layout.welcomeAlign));
-    check('the greeting is short and friendly', /here we go/i.test(layout.heading), layout.heading);
+    check('the greeting is a real line, not a placeholder',
+      String(layout.heading).length > 2, layout.heading);
     check('the top bar carries no chips, only icon buttons',
       layout.topbarChips === 0, `chips=${layout.topbarChips}`);
     check('the top bar exposes provider, settings and theme controls',

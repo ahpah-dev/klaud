@@ -1,6 +1,6 @@
 {
   "name": "klaud",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "A local coding agent with a built-in list of free, no-card OpenAI-compatible providers. Bring your own key, or use none at all.",
   "license": "MIT",
   "author": "Klaud contributors",

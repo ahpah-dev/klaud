@@ -1645,6 +1645,126 @@ async function main() {
     });
   });
 
+  /* ========================= welcome greeting =========================== */
+  // The greeting helpers live in public/app.js, which is an ES module and cannot
+  // be required, so the functions are lifted out of the source by name. Crude,
+  // but it keeps the tested code identical to the shipped code — a copy would
+  // drift the moment either side changed.
+  await describe('welcome greeting', async () => {
+    const appSource = await fs.readFile(path.join(__dirname, '..', 'public', 'app.js'), 'utf8');
+    const grab = (name) => {
+      const start = appSource.indexOf(`function ${name}`);
+      assert.ok(start !== -1, `${name} not found in public/app.js`);
+      let depth = 0;
+      for (let k = appSource.indexOf('{', start); k < appSource.length; k++) {
+        if (appSource[k] === '{') depth++;
+        else if (appSource[k] === '}') {
+          depth--;
+          if (!depth) return appSource.slice(start, k + 1);
+        }
+      }
+      throw new Error(`unbalanced braces in ${name}`);
+    };
+    const escapeHtml = (s) =>
+      String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const blockStart = appSource.indexOf('const GREETING_BUCKETS');
+    assert.ok(blockStart !== -1, 'GREETING_BUCKETS not found');
+    const source = [
+      appSource.slice(blockStart, appSource.indexOf('function greetingForHour')),
+      grab('greetingForHour'),
+      grab('pickGreeting'),
+      grab('greetingMarkup'),
+    ].join('\n');
+    // eslint-disable-next-line no-new-func
+    const greeting = new Function(
+      'escapeHtml',
+      `${source}\nreturn { pickGreeting, greetingForHour, greetingMarkup };`
+    )(escapeHtml);
+
+    const bucketAt = (hour) => greeting.greetingForHour(hour).name;
+    const linesAt = (hour, rolls = 400) => {
+      const seen = new Set();
+      for (let i = 0; i < rolls; i++) seen.add(greeting.pickGreeting(hour, i / rolls).text);
+      return seen;
+    };
+
+    await it('uses an evening line in the evening', () => {
+      const lines = linesAt(19);
+      assert.ok([...lines].some((l) => /evening thoughts/i.test(l)), [...lines].join(' | '));
+      assert.equal(bucketAt(19), 'evening');
+    });
+
+    await it('offers a coffee line in the morning', () => {
+      const lines = linesAt(8);
+      assert.ok([...lines].some((l) => /coffee/i.test(l)), [...lines].join(' | '));
+      assert.equal(bucketAt(8), 'morning');
+    });
+
+    await it('asks about late night coding past 11pm', () => {
+      const lines = linesAt(23);
+      assert.ok([...lines].some((l) => /late night coding/i.test(l)), [...lines].join(' | '));
+      assert.equal(bucketAt(23), 'late-night');
+    });
+
+    await it('treats the small hours as late night too', () => {
+      for (const hour of [0, 1, 2, 3, 4]) assert.equal(bucketAt(hour), 'late-night', `hour ${hour}`);
+    });
+
+    await it('keeps "Here we go!" in every bucket', () => {
+      for (const hour of [1, 8, 13, 19]) {
+        const lines = linesAt(hour);
+        assert.ok(lines.has('Here we go!'), `hour ${hour} had: ${[...lines].join(' | ')}`);
+      }
+    });
+
+    await it('makes "Here we go!" common but not constant', () => {
+      for (const hour of [8, 13, 19, 1]) {
+        let hits = 0;
+        for (let i = 0; i < 1000; i++) if (greeting.pickGreeting(hour, i / 1000).text === 'Here we go!') hits++;
+        assert.ok(hits >= 250, `hour ${hour}: only ${hits}/1000 rolls`);
+        assert.ok(hits <= 850, `hour ${hour}: ${hits}/1000 rolls leaves no variety`);
+      }
+    });
+
+    await it('varies within a bucket rather than always saying the same thing', () => {
+      for (const hour of [8, 13, 19, 1]) {
+        assert.ok(linesAt(hour).size >= 4, `hour ${hour} only produced ${linesAt(hour).size} lines`);
+      }
+    });
+
+    await it('never returns undefined for an out-of-range roll', () => {
+      assert.ok(greeting.pickGreeting(13, 1).text, 'roll of exactly 1');
+      assert.ok(greeting.pickGreeting(13, -0.5).text, 'negative roll');
+      assert.ok(greeting.pickGreeting(13, 0).text, 'roll of 0');
+    });
+
+    await it('wraps an impossible hour instead of falling over', () => {
+      assert.equal(bucketAt(25), 'late-night', '25 wraps to 1');
+      assert.equal(bucketAt(-1), 'late-night', '-1 wraps to 23');
+      assert.equal(bucketAt(23.9), 'late-night', 'fractional hours floor');
+      assert.equal(bucketAt(NaN), 'midday', 'NaN falls back to a sane default');
+    });
+
+    await it('emphasises only the chosen words', () => {
+      const marked = greeting.greetingMarkup({ text: 'Here we go!', emphasis: 'go' });
+      assert.equal(marked, 'Here we <em>go</em>!');
+      const coffee = greeting.greetingMarkup({ text: 'Coffee and Klaud time?', emphasis: 'Coffee' });
+      assert.equal(coffee, '<em>Coffee</em> and Klaud time?');
+    });
+
+    await it('falls back to plain text when the emphasis is absent', () => {
+      assert.equal(greeting.greetingMarkup({ text: 'Plain', emphasis: null }), 'Plain');
+      // A mismatch must not lose the words or inject markup.
+      assert.equal(greeting.greetingMarkup({ text: 'Plain', emphasis: 'zzz' }), 'Plain');
+    });
+
+    await it('escapes the greeting rather than trusting it', () => {
+      const nasty = greeting.greetingMarkup({ text: '<img onerror=x>', emphasis: '<img' });
+      assert.ok(!/<img/.test(nasty), nasty);
+      assert.match(nasty, /&lt;img/);
+    });
+  });
+
   /* =========================== history pruning =========================== */
   await describe('history pruning', async () => {
     const turn = (n, pad = '') => [
