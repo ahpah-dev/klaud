@@ -55,6 +55,61 @@ function buildHeaders(apiKey, extraHeaders) {
   return headers;
 }
 
+/**
+ * How long to wait before retrying a throttled request, in milliseconds.
+ * Returns null when the provider wants longer than we are willing to block.
+ *
+ * Fixed exponential backoff is wrong for the free tiers Klaud targets. A
+ * per-minute limit answers "retry in 53s"; retrying after 1.5s and 3s burns
+ * two of three attempts and reports a failure that would have cleared on its
+ * own. Providers also send Retry-After, which was being ignored entirely.
+ *
+ * The cap matters as much as the wait: silently hanging for minutes looks
+ * exactly like a freeze, so a request needing longer than this fails fast with
+ * a message that says how long to wait.
+ */
+const MAX_RETRY_WAIT_MS = 60_000;
+
+function retryDelayMs(res, bodyText) {
+  const header = res.headers?.get?.('retry-after');
+  if (header) {
+    const seconds = Number(header);
+    if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1_000;
+    const when = Date.parse(header);
+    if (Number.isFinite(when)) return Math.max(0, when - Date.now());
+  }
+
+  // Some gateways put the wait in the error text: "retry in 42s",
+  // "try again in 1 minute", "Please retry after 30 seconds".
+  const text = String(bodyText || '');
+  const patterns = [
+    /retry(?:\s+again)?\s+(?:in|after)\s+(\d+(?:\.\d+)?)\s*(ms|milliseconds?|s|secs?|seconds?|m|mins?|minutes?)/i,
+    /try\s+again\s+in\s+(\d+(?:\.\d+)?)\s*(ms|milliseconds?|s|secs?|seconds?|m|mins?|minutes?)/i,
+  ];
+  for (const re of patterns) {
+    const m = text.match(re);
+    if (!m) continue;
+    const value = Number(m[1]);
+    const unit = m[2].toLowerCase();
+    const multiplier = unit.startsWith('ms') || unit.startsWith('milli')
+      ? 1
+      : unit.startsWith('m')
+        ? 60_000
+        : 1_000;
+    return value * multiplier;
+  }
+  return null;
+}
+
+/** Read a response body for the error message, tolerating a body already used. */
+async function peekBody(res) {
+  try {
+    return await res.text();
+  } catch {
+    return '';
+  }
+}
+
 /** Turn an HTTP error response into a message a human can act on. */
 async function describeHttpError(res, context = {}) {
   const raw = await res.text().catch(() => '');
@@ -126,6 +181,16 @@ async function describeHttpError(res, context = {}) {
     } else if (res.status === 429) {
       hint = ' Cloudflare is rate limiting. The free allowance is 10,000 Neurons per day, resetting at 00:00 UTC.';
     }
+  } else if (res.status >= 500) {
+    // NVIDIA's shared endpoint answers 500 {"message":"Failed to generate
+    // completions"} for a minimal request as readily as a complex one, which
+    // means the fault is theirs. Confirmed by probing: every variant fails at
+    // once, then everything recovers. Saying so stops people rewriting working
+    // configuration to chase an outage.
+    hint =
+      'The provider\'s model server failed, which usually means their shared endpoint is ' +
+      'temporarily unhealthy rather than anything wrong with your request. This is not your key ' +
+      'or your settings. Retry in a moment, or switch model.';
   } else {
     const hints = {
       401: 'The API key was rejected. Check it in Settings, and make sure the base URL matches the provider.',
@@ -225,6 +290,74 @@ function parseToolArguments(raw) {
 }
 
 /* ------------------------------------------------------------------ *
+ * Reasoning effort
+ * ------------------------------------------------------------------ */
+
+const REASONING_EFFORT_LEVELS = ['low', 'medium', 'high'];
+
+/**
+ * How to say "reason more" to the endpoint at `baseUrl`.
+ *
+ * There is no single standard field for this, so the mapping names one exact
+ * host plus the field that host documents, and returns undefined for everyone
+ * else. That is the whole point of the function: a provider that does not know
+ * a field answers 400 and the turn is dead, so a wrong guess is worse than
+ * silence. Only add an entry here after reading the provider's own API
+ * reference — "it is OpenAI-compatible" does not imply it validates unknown
+ * body parameters the way OpenAI does.
+ *
+ *   api.openai.com            reasoning_effort: "low" | "medium" | "high"
+ *                             (the OpenAI reasoning-model parameter)
+ *   openrouter.ai             reasoning: { effort: ... }
+ *                             (OpenRouter's normalised form; it translates the
+ *                             effort into whatever the routed model speaks, so
+ *                             this covers Anthropic and Gemini models reached
+ *                             through OpenRouter)
+ *   integrate.api.nvidia.com  nothing. NVIDIA's own NIM reference documents no
+ *                             effort parameter, and a strict validator rejects
+ *                             the whole request over one unknown key.
+ *   everything else           nothing.
+ *
+ * The returned object is spread straight into the request body, so the keys
+ * here are the wire format.
+ */
+function reasoningEffortFields(baseUrl, effort) {
+  const level = REASONING_EFFORT_LEVELS.includes(String(effort || '').trim().toLowerCase())
+    ? String(effort).trim().toLowerCase()
+    : '';
+  if (!level) return {};
+
+  let host = '';
+  try {
+    host = new URL(String(baseUrl || '')).hostname.toLowerCase();
+  } catch {
+    return {};
+  }
+
+  if (host === 'api.openai.com') return { reasoning_effort: level };
+  if (host === 'openrouter.ai' || host.endsWith('.openrouter.ai')) return { reasoning: { effort: level } };
+  return {};
+}
+
+/**
+ * The current level, set once from saved settings.
+ *
+ * `streamChat` is called by the agent loop, and the loop does not forward this
+ * setting — it sends only baseUrl, model and temperature. Rather than guess a
+ * level per request, the server pushes the value it loaded from
+ * ~/.klaud/settings.json here. A pass-through is set, not merged, so clearing
+ * the slider in the UI really does stop the field being sent.
+ */
+let activeReasoningEffort = '';
+
+function configureReasoningEffort(effort) {
+  activeReasoningEffort = REASONING_EFFORT_LEVELS.includes(String(effort || '').trim().toLowerCase())
+    ? String(effort).trim().toLowerCase()
+    : '';
+  return activeReasoningEffort;
+}
+
+/* ------------------------------------------------------------------ *
  * Streaming request
  * ------------------------------------------------------------------ */
 
@@ -249,6 +382,7 @@ async function streamChat({
   toolChoice,
   temperature = 0.2,
   maxTokens,
+  reasoningEffort,
   signal,
   onEvent = () => {},
 }) {
@@ -260,6 +394,9 @@ async function streamChat({
     messages,
     stream: true,
     temperature,
+    // Only present when the provider is known to accept it. See
+    // reasoningEffortFields: an unknown provider gets no field at all.
+    ...reasoningEffortFields(baseUrl, reasoningEffort === undefined ? activeReasoningEffort : reasoningEffort),
   };
   if (tools && tools.length) {
     body.tools = tools;
@@ -293,8 +430,30 @@ async function streamChat({
 
     if (!res.ok) {
       if (RETRY_STATUS.has(res.status) && attempt < 2) {
-        res.body?.cancel?.().catch(() => {});
-        await sleep(res.status === 429 ? 1_500 * (attempt + 1) : 700 * (attempt + 1));
+        const bodyText = await peekBody(res);
+        const wait = retryDelayMs(res, bodyText);
+        const backoff = res.status === 429 ? 1_500 * (attempt + 1) : 700 * (attempt + 1);
+        const delay = wait === null ? backoff : wait;
+
+        // A throttle that outlasts the cap is reported now, with the provider's
+        // own words, rather than blocking for minutes or failing silently.
+        if (delay > MAX_RETRY_WAIT_MS) {
+          const secs = Math.ceil(delay / 1_000);
+          throw new LLMError(
+            `Rate limited. The provider asked for a ${secs}s wait, which is longer than Klaud will ` +
+              `block a turn for. Wait it out, or switch model or provider.\n\n${bodyText.slice(0, 400).trim()}`,
+            { status: res.status, url, body: bodyText.slice(0, 800) }
+          );
+        }
+
+        if (typeof onEvent === 'function') {
+          onEvent({
+            type: 'notice',
+            level: 'info',
+            message: `Rate limited — waiting ${Math.round(delay / 1_000)}s before retrying (attempt ${attempt + 2} of 3).`,
+          });
+        }
+        await sleep(delay);
         continue;
       }
       throw new LLMError(await describeHttpError(res, { url, model, baseUrl }), { status: res.status, url });
@@ -536,5 +695,10 @@ module.exports = {
   chatCompletionsUrl,
   createAccumulator,
   normalizeBaseUrl,
+  reasoningEffortFields,
+  configureReasoningEffort,
+  REASONING_EFFORT_LEVELS,
   describeHttpErrorForTest: describeHttpError,
+  retryDelayMs,
+  MAX_RETRY_WAIT_MS,
 };

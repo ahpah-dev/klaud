@@ -108,6 +108,87 @@ function messageSize(message) {
   return size;
 }
 
+/* ------------------------------------------------------------------ *
+ * Loop detection
+ *
+ * Without this, a model that keeps asking for the same tool simply runs until
+ * the step cap, burning the user's rate limit and producing nothing. Weaker
+ * tool-callers on free tiers do this constantly — re-listing the same
+ * directory, re-reading the same file — so the loop is broken here rather
+ * than left to the model's judgement.
+ * ------------------------------------------------------------------ */
+
+/**
+ * Stable signature for a tool call. Keys are sorted so that `{"a":1,"b":2}` and
+ * `{"b":2,"a":1}` collide, which is what we want: the model means the same call.
+ */
+function callSignature(name, args) {
+  let body;
+  try {
+    body = JSON.stringify(args ?? {}, Object.keys(args || {}).sort());
+  } catch {
+    body = String(args);
+  }
+  return `${name}(${body})`;
+}
+
+/**
+ * Turn a raw tool failure into something the model can act on.
+ *
+ * A bare stack trace or "not found" gives the model nothing to change, so it
+ * retries the same call. Every hint here names a different next action.
+ */
+function suggestRecovery(name, output) {
+  const text = String(output || '');
+  const rules = [
+    [/ENOENT|no such file|not found|does not exist/i,
+      'That path does not exist. Confirm it with list_dir or glob_files before reading or writing, and use a path relative to the working directory.'],
+    [/EACCES|EPERM|permission denied/i,
+      'Permission was denied. Do not retry the same path; choose a location inside the working directory.'],
+    [/ambiguous|matches? \d+ (times|locations)|not unique/i,
+      'The match was not unique. Read the file and include more surrounding context so the target is unambiguous.'],
+    [/no match|not present|could not find the (string|text)/i,
+      'The text was not found. Read the file first — the content is probably different from what you assumed.'],
+    [/is a directory/i,
+      'That is a directory, not a file. Use list_dir.'],
+    [/command not found|not recognized as an internal/i,
+      'That command is not available on this machine. Check what is installed, or use a different tool.'],
+    [/timed out|timeout/i,
+      'The command timed out. Narrow it down or give it more time rather than rerunning it unchanged.'],
+    [/exit code [1-9]/i,
+      'The command ran but failed. Read the output above and fix the cause before running it again.'],
+  ];
+  for (const [pattern, hint] of rules) {
+    if (pattern.test(text)) return `${text}\n\n[Klaud] ${hint}`;
+  }
+  if (name === 'run_command') {
+    return `${text}\n\n[Klaud] Read the output before running this again. If it failed, change the command or fix the cause.`;
+  }
+  return `${text}\n\n[Klaud] Running this again unchanged will produce the same result. Change the arguments or try another tool.`;
+}
+
+/** The nudge injected when the model repeats an entire step. */
+function stuckMessage(stepSignature) {
+  return [
+    'You have issued this exact set of tool calls before in this turn, and re-running them',
+    'would return the same output. Stop and reassess instead:',
+    '',
+    `  ${stepSignature.slice(0, 400)}`,
+    '',
+    'Say what you have established so far, why the previous attempt did not get you where',
+    'you wanted, and what you will do differently. Then make a DIFFERENT call — or, if the',
+    'task is complete, reply with no tool call at all to finish the turn.',
+  ].join('\n');
+}
+
+const WRAP_UP_MESSAGE = [
+  'You are nearly out of steps for this turn. Do not start anything new.',
+  '',
+  'Reply now, with no tool calls, and report: what you changed, how you verified it, and',
+  'what is still unfinished. The user can ask you to continue, and your summary is what',
+  'they will read to decide whether to.',
+].join('\n');
+
 /**
  * Keep the most recent part of a long conversation so one session cannot grow
  * without bound. Cutting happens at whole user turns only, so an assistant
@@ -196,9 +277,33 @@ async function runAgentTurn(ctx) {
   let finalText = '';
   let degradedReason = '';
 
+  // Loop bookkeeping. `seenCalls` counts identical calls within this turn;
+  // `seenSteps` counts identical whole steps. Both reset per turn, because
+  // repeating a call in a later turn after new information is legitimate.
+  const seenCalls = new Map();
+  const seenSteps = new Map();
+  let wrapUpSent = false;
+  // Only ever ask once for a missing answer, or a silent model becomes a loop.
+  let answeredNothing = false;
+
+  // The last step or two exist to let the model write its summary, not to start
+  // more work. Telling it that up front produces a real hand-off instead of a
+  // conversation that just stops mid-sentence at the cap.
+  const wrapUpAfter = Math.max(1, maxSteps - 2);
+
   while (steps < maxSteps) {
     steps++;
     emit({ type: 'step', index: steps, max: maxSteps });
+
+    if (!toolsDisabled && steps > wrapUpAfter && !wrapUpSent) {
+      wrapUpSent = true;
+      record({ role: 'system', content: WRAP_UP_MESSAGE });
+      emit({
+        type: 'notice',
+        level: 'info',
+        message: 'Near the step limit — asking the model to summarise instead of starting anything new.',
+      });
+    }
 
     const requestMessages = messages;
     let result;
@@ -237,7 +342,9 @@ async function runAgentTurn(ctx) {
         steps--;
         degradedReason =
           `${settings.model} rejected the tool definitions, so Klaud continued without them. ` +
-          'Pick a tool-capable model (for example a GPT, Claude, Gemini, Qwen-Coder or Llama 3.1+ model) to let the agent edit files.';
+          `It can still read and run nothing itself, so expect answers only — no file edits. ` +
+          `If you see tool syntax written out as text, that is the model trying anyway and being ignored. ` +
+          `Pick a tool-capable model to get the agent back.`;
         emit({ type: 'notice', level: 'warn', message: degradedReason });
         continue;
       }
@@ -278,6 +385,39 @@ async function runAgentTurn(ctx) {
       } else if (result.finishReason === 'content_filter') {
         emit({ type: 'notice', level: 'warn', message: 'The provider filtered this response.' });
       }
+
+      // The model stopped without saying anything, after doing real work. Some
+      // tool-calling models do this: they treat the final tool result as the
+      // answer and end the turn. The user is then left with an empty reply and
+      // no idea whether the task succeeded, so ask once, explicitly, for prose.
+      const worked = steps > 1 || allToolCalls.length > 0;
+      const said = String(result.text || '').trim();
+      if (!said && worked && !answeredNothing) {
+        answeredNothing = true;
+        messages.push({
+          role: 'system',
+          content:
+            'You ended the turn without writing anything, so the user has no answer to read. ' +
+            'Write your reply now in plain text: what you did, what you found, and anything you ' +
+            'could not complete. Do not call any tools.',
+        });
+        emit({
+          type: 'notice',
+          level: 'info',
+          message: 'The model finished without an answer, so Klaud asked it to write one.',
+        });
+        continue;
+      }
+      if (!said && worked) {
+        emit({
+          type: 'notice',
+          level: 'warn',
+          message:
+            'The model stopped twice without producing a reply. The tool results above are real — ' +
+            'it just did not summarise them. Ask it to explain what it did if you need the summary.',
+        });
+      }
+
       emit({ type: 'done', finished: 'stop', steps, usage: usageTotals });
       return {
         messages: newMessages,
@@ -285,14 +425,24 @@ async function runAgentTurn(ctx) {
         steps,
         toolCalls: allToolCalls,
         finished: 'stop',
+        finalText,
       };
     }
 
     // Execute the requested tools, in order.
+    const stepParts = [];
+    let repeatedStep = null;
+    let loopBroken = false;
+
     for (const call of result.toolCalls) {
       const name = call.function.name;
       const rawArgs = call.function.arguments;
       const args = parseToolArguments(rawArgs);
+      const argsReady = !(args && args.__parse_error);
+      const signature = argsReady ? callSignature(name, args) : `unparsed:${name}`;
+      stepParts.push(signature);
+      const priorCount = seenCalls.get(signature) || 0;
+      seenCalls.set(signature, priorCount + 1);
 
       emit({
         type: 'tool_call',
@@ -303,12 +453,55 @@ async function runAgentTurn(ctx) {
       });
 
       if (args && args.__parse_error) {
-        const message =
-          `Error: could not parse the arguments for ${name} as JSON. ` +
-          `Re-send the call with valid JSON. Received: ${String(args.raw).slice(0, 500)}`;
-        emit({ type: 'tool_result', id: call.id, name, ok: false, output: message, durationMs: 0 });
+        // Seen in practice: a model that cannot emit valid tool JSON answers in
+        // prose instead, and at least one writes a <tool_call> block as text.
+        // Saying so is more useful than only complaining about the JSON.
+        const message = suggestRecovery(
+          name,
+          `Could not parse the arguments for ${name} as JSON. Received: ${String(args.raw).slice(0, 500)}` +
+            `\n\nIf you cannot call tools, reply in plain text with what you need and Klaud will pass it on.` +
+            ` Do not write tool syntax as prose — it will not be executed.`
+        );
+        emit({ type: 'tool_result', id: call.id, name, ok: false, output: message, durationMs: 0, loop: false });
         record({ role: 'tool', tool_call_id: call.id, content: message });
         allToolCalls.push({ id: call.id, name, ok: false, args });
+        continue;
+      }
+
+      // Identical call already made this turn. The first repeat is answered with
+      // a warning and the earlier result, which is cheap and often enough; the
+      // second is refused outright, because by then the model is not reading.
+      if (priorCount >= 1) {
+        const repeated = priorCount >= 2;
+        const message = repeated
+          ? [
+              `Refused: you have already called ${name} with these exact arguments`,
+              `${priorCount} times this turn, and the result will not change.`,
+              '',
+              'Stop and reassess. Reply with no tool call, stating what you have established',
+              'and what is blocking you, or make a genuinely different call.',
+            ].join(' ')
+          : [
+              `Note: this is an identical repeat of a call you already made this turn, so the`,
+              `result is unchanged. Do not call it a third time.`,
+              '',
+              'If you were checking whether something changed, it has not — you have not run',
+              'anything since. Choose a different step or finish the turn with a summary.',
+            ].join('\n');
+
+        emit({
+          type: 'tool_result',
+          id: call.id,
+          name,
+          ok: false,
+          output: message,
+          durationMs: 0,
+          loop: true,
+          repeated,
+        });
+        emit({ type: 'loop', name, repeats: priorCount, blocked: repeated, args });
+        record({ role: 'tool', tool_call_id: call.id, content: message });
+        allToolCalls.push({ id: call.id, name, ok: false, loop: true, args });
         continue;
       }
 
@@ -340,7 +533,10 @@ async function runAgentTurn(ctx) {
         onTodos: (todos) => emit({ type: 'todos', todos }),
       });
 
-      const content = truncateForModel(outcome.output);
+      // A failure with no guidance is what makes a model retry the same call, so
+      // every failed tool result carries a concrete alternative.
+      const rawOutput = outcome.ok ? outcome.output : suggestRecovery(name, outcome.output);
+      const content = truncateForModel(rawOutput);
       emit({
         type: 'tool_result',
         id: call.id,
@@ -354,9 +550,92 @@ async function runAgentTurn(ctx) {
       allToolCalls.push({ id: call.id, name, ok: outcome.ok, args, durationMs: outcome.durationMs });
     }
 
+    // Did the model ask for exactly the same set of calls as some earlier step?
+    // That is a stuck loop regardless of how the individual calls are counted.
+    const stepSignature = stepParts.join(' | ');
+    if (stepSignature && stepParts.length) {
+      const before = seenSteps.get(stepSignature) || 0;
+      seenSteps.set(stepSignature, before + 1);
+      if (before >= 1) repeatedStep = stepSignature;
+    }
+
+    if (repeatedStep) {
+      emit({
+        type: 'notice',
+        level: 'warn',
+        message:
+          'The model repeated an identical step, so Klaud stopped the loop. It will summarise what it has instead.',
+      });
+      // Every tool call must be answered or the next request is malformed. Calls
+      // that already produced a result keep it; only the unanswered ones get a
+      // placeholder, and the conversation stays valid for strict providers.
+      const answered = new Set(
+        messages.filter((m) => m.role === 'tool').map((m) => m.tool_call_id)
+      );
+      for (const call of result.toolCalls) {
+        if (answered.has(call.id)) continue;
+        record({
+          role: 'tool',
+          tool_call_id: call.id,
+          content: 'Not executed: the previous identical step already answered this.',
+        });
+      }
+      record({
+        role: 'system',
+        content:
+          'The loop was detected and stopped. Write your final answer now, with no tool calls.',
+      });
+      loopBroken = true;
+    }
+
     if (ctx.signal?.aborted) {
       emit({ type: 'aborted' });
       return { messages: newMessages, usage: usageTotals, steps, toolCalls: allToolCalls, finished: 'aborted' };
+    }
+
+    // Loop broken: give the model one final request with tools withheld so it
+    // has to write prose, then end the turn.
+    if (loopBroken) {
+      steps++;
+      let closing = null;
+      try {
+        closing = await streamChat({
+          baseUrl: settings.baseUrl,
+          apiKey: settings.apiKey,
+          extraHeaders: settings.extraHeaders,
+          model: settings.model,
+          messages,
+          tools: null,
+          temperature: settings.temperature,
+          signal: ctx.signal,
+          onEvent: (event) => {
+            if (event.type === 'usage') emit({ type: 'usage', usage: event.usage });
+            else emit(event);
+          },
+        });
+      } catch (err) {
+        emit({ type: 'error', message: err instanceof LLMError ? err.message : String(err?.message || err) });
+      }
+
+      if (closing) {
+        if (closing.usage) {
+          usageTotals.prompt_tokens += closing.usage.prompt_tokens || 0;
+          usageTotals.completion_tokens += closing.usage.completion_tokens || 0;
+          usageTotals.total_tokens += closing.usage.total_tokens || 0;
+        }
+        record({ role: 'assistant', content: closing.text || '' });
+        if (closing.text) finalText = closing.text;
+      }
+
+      emit({ type: 'done', finished: 'loop_broken', steps, usage: usageTotals });
+      return {
+        messages: newMessages,
+        usage: usageTotals,
+        steps,
+        toolCalls: allToolCalls,
+        finished: 'loop_broken',
+        finalText,
+      };
     }
   }
 
@@ -373,4 +652,12 @@ async function runAgentTurn(ctx) {
   };
 }
 
-module.exports = { runAgentTurn, sanitizeMessages, repairToolSequences, pruneHistory };
+module.exports = {
+  runAgentTurn,
+  sanitizeMessages,
+  repairToolSequences,
+  pruneHistory,
+  callSignature,
+  suggestRecovery,
+  stuckMessage,
+};

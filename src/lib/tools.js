@@ -331,7 +331,7 @@ const TOOLS = [
       properties: {
         path: { type: 'string', description: 'Directory path relative to the working directory.' },
         recursive: { type: 'boolean', description: 'Recurse into subdirectories (default false).' },
-        max_entries: { type: 'integer', description: 'Maximum entries to return (default 200).' },
+        max_entries: { type: 'integer', description: 'Maximum entries to return (default 100).' },
       },
       required: [],
     },
@@ -342,7 +342,12 @@ const TOOLS = [
       if (!st) throw new Error(`"${rel}" does not exist`);
       if (!st.isDirectory()) throw new Error(`"${rel}" is a file, not a directory. Use read_file.`);
 
-      const max = Math.min(Number(args.max_entries) || 200, 2_000);
+      // 100, not 200. A home or Downloads directory holds hundreds of entries,
+      // and at ~32 characters per line the old default pushed 8k characters into
+      // the request for a single call — enough to crowd out a free tier's context
+      // and slow every later step. The note also tells the model how to narrow
+      // down, instead of leaving it to guess.
+      const max = Math.min(Number(args.max_entries) || 100, 2_000);
       if (!args.recursive) {
         const entries = await fs.readdir(abs, { withFileTypes: true });
         entries.sort((a, b) => a.name.localeCompare(b.name));
@@ -358,8 +363,17 @@ const TOOLS = [
             lines.push(`[file] ${e.name}${size}`);
           }
         }
-        const more = entries.length > max ? `\n... ${entries.length - max} more entries` : '';
-        return `${shown === '.' ? '.' : shown} — ${entries.length} entries\n${lines.join('\n')}${more}`;
+        const more =
+          entries.length > max
+            ? `\n... ${entries.length - max} more entries not shown. Use glob_files to filter, or raise max_entries if you really need them all.`
+            : '';
+        // State both numbers. "254 entries" above a 100-line listing reads as a
+        // complete inventory, and a model that trusts it reports the wrong count.
+        const header =
+          entries.length > max
+            ? `${shown === '.' ? '.' : shown} — ${entries.length} entries, showing the first ${max}`
+            : `${shown === '.' ? '.' : shown} — ${entries.length} entries`;
+        return `${header}\n${lines.join('\n')}${more}`;
       }
 
       const all = await walk(abs, { max });

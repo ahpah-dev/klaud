@@ -19,8 +19,17 @@ const assert = require('assert/strict');
 const { executeTool, TOOLS, lineDiff } = require('../src/lib/tools');
 const { resolveInside, globToRegExp, matchGlob } = require('../src/lib/fsutil');
 const { streamChat, parseToolArguments, listModels, LLMError } = require('../src/llm');
-const { runAgentTurn, sanitizeMessages, repairToolSequences, pruneHistory } = require('../src/agent');
+const {
+  runAgentTurn,
+  sanitizeMessages,
+  repairToolSequences,
+  pruneHistory,
+  callSignature,
+  suggestRecovery,
+  stuckMessage,
+} = require('../src/agent');
 const { DEFAULTS } = require('../src/config');
+const { retryDelayMs, MAX_RETRY_WAIT_MS, configureReasoningEffort } = require('../src/llm');
 
 /* ------------------------------------------------------------------ *
  * Tiny harness: every check runs in order and every assertion is awaited.
@@ -213,6 +222,178 @@ function startMockProvider() {
       return;
     }
 
+    if (state.scenario === 'busy_no_loop') {
+      // Never stops calling tools, but every call is different, so loop
+      // detection stays quiet and only the step cap can end the turn.
+      const n = messages.filter((m) => m.role === 'tool').length;
+      write({ model: 'mock-large', choices: [{ index: 0, delta: { content: `Step ${n}.` } }] });
+      write({
+        model: 'mock-large',
+        choices: [
+          {
+            index: 0,
+            delta: {
+              tool_calls: [
+                {
+                  index: 0,
+                  id: `b${n}`,
+                  type: 'function',
+                  function: { name: 'list_dir', arguments: JSON.stringify({ path: n === 0 ? '.' : `dir${n}` }) },
+                },
+              ],
+            },
+          },
+        ],
+      });
+      write({ model: 'mock-large', choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] });
+      res.write('data: [DONE]\n\n');
+      res.end();
+      return;
+    }
+
+    if (state.scenario === 'vary_args') {
+      // The same tool with different arguments each step: repeated calls, but
+      // never an identical one, so the per-call guard must not fire.
+      const n = messages.filter((m) => m.role === 'tool').length;
+      write({
+        model: 'mock-large',
+        choices: [
+          {
+            index: 0,
+            delta: {
+              tool_calls: [
+                {
+                  index: 0,
+                  id: `v${n}`,
+                  type: 'function',
+                  function: { name: 'list_dir', arguments: JSON.stringify({ path: `p${n}` }) },
+                },
+              ],
+            },
+          },
+        ],
+      });
+      write({ model: 'mock-large', choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] });
+      res.write('data: [DONE]\n\n');
+      res.end();
+      return;
+    }
+
+    if (state.scenario === 'dup_within_step') {
+      // Two identical calls in one step, then a repeat of that step.
+      const n = messages.filter((m) => m.role === 'tool').length;
+      write({
+        model: 'mock-large',
+        choices: [
+          {
+            index: 0,
+            delta: {
+              tool_calls: [
+                { index: 0, id: `d${n}a`, type: 'function', function: { name: 'list_dir', arguments: '{"path":"."}' } },
+                { index: 1, id: `d${n}b`, type: 'function', function: { name: 'list_dir', arguments: '{"path":"."}' } },
+              ],
+            },
+          },
+        ],
+      });
+      write({ model: 'mock-large', choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] });
+      res.write('data: [DONE]\n\n');
+      res.end();
+      return;
+    }
+
+    if (state.scenario === 'silent_stop') {
+      // Does real work, then ends the turn without writing anything — which
+      // leaves the user with an empty transcript. Seen on NVIDIA NIM.
+      // Counted by assistant turn, not by tool result: the nudge after a silent
+      // stop adds no tool result, so that counter would not advance.
+      const turns = messages.filter((m) => m.role === 'assistant').length;
+      if (turns === 0) {
+        write({
+          model: 'mock-large',
+          choices: [
+            {
+              index: 0,
+              delta: {
+                tool_calls: [
+                  { index: 0, id: 's1', type: 'function', function: { name: 'list_dir', arguments: '{"path":"."}' } },
+                ],
+              },
+            },
+          ],
+        });
+        write({ model: 'mock-large', choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] });
+      } else if (turns === 1) {
+        // Stopped with nothing to say.
+        write({ model: 'mock-large', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] });
+      } else {
+        // The nudge worked.
+        write({ model: 'mock-large', choices: [{ index: 0, delta: { content: 'There are 3 files.' } }] });
+        write({ model: 'mock-large', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] });
+      }
+      res.write('data: [DONE]\n\n');
+      res.end();
+      return;
+    }
+
+    if (state.scenario === 'silent_always') {
+      // Never writes anything, however many times it is asked.
+      const n = messages.filter((m) => m.role === 'tool').length;
+      if (n === 0) {
+        write({
+          model: 'mock-large',
+          choices: [
+            {
+              index: 0,
+              delta: {
+                tool_calls: [
+                  { index: 0, id: 'q1', type: 'function', function: { name: 'list_dir', arguments: '{"path":"."}' } },
+                ],
+              },
+            },
+          ],
+        });
+        write({ model: 'mock-large', choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] });
+      } else {
+        write({ model: 'mock-large', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] });
+      }
+      res.write('data: [DONE]\n\n');
+      res.end();
+      return;
+    }
+
+    if (state.scenario === 'failing_tool') {
+      // A tool that always fails, to check the recovery hint reaches the model.
+      const n = messages.filter((m) => m.role === 'tool').length;
+      if (n >= 1) {
+        write({ model: 'mock-large', choices: [{ index: 0, delta: { content: 'Giving up on that file.' } }] });
+        write({ model: 'mock-large', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] });
+      } else {
+        write({
+          model: 'mock-large',
+          choices: [
+            {
+              index: 0,
+              delta: {
+                tool_calls: [
+                  {
+                    index: 0,
+                    id: 'f1',
+                    type: 'function',
+                    function: { name: 'read_file', arguments: '{"path":"does-not-exist.txt"}' },
+                  },
+                ],
+              },
+            },
+          ],
+        });
+        write({ model: 'mock-large', choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] });
+      }
+      res.write('data: [DONE]\n\n');
+      res.end();
+      return;
+    }
+
     if (state.scenario === 'slow') {
       write({ choices: [{ index: 0, delta: { content: 'thinking' } }] });
       // Deliberately never finishes: the client is expected to abort.
@@ -245,6 +426,29 @@ function startMockProvider() {
       resolve(state);
     });
   });
+}
+
+/* ------------------------------------------------------------------ *
+ * Simulated provider hosts
+ * ------------------------------------------------------------------ */
+
+/**
+ * Send a request aimed at a real provider host to the local mock instead, so a
+ * wire-format check can name api.openai.com without a network call.
+ *
+ * `streamChat` takes no fetch implementation, and threading one through would
+ * change the production path to make a test possible; the existing checks
+ * already swap global.fetch, so this follows them.
+ */
+function providerFetch(targetBase) {
+  const original = global.fetch;
+  global.fetch = (url, init) => {
+    const path = new URL(String(url)).pathname;
+    return original(`${String(targetBase).replace(/\/+$/, '')}${path}`, init);
+  };
+  return () => {
+    global.fetch = original;
+  };
 }
 
 /* ------------------------------------------------------------------ *
@@ -497,6 +701,56 @@ async function main() {
     });
   });
 
+  /* ============================= settings store ========================== */
+  // Its own throwaway data dir: the point of these checks is that a setting
+  // survives a write and a read, and doing that against ~/.klaud would rewrite
+  // the real configuration of whoever ran the tests.
+  await describe('settings store', async () => {
+    const settingsDataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'klaud-settings-'));
+    const previousDataDir = process.env.KLAUD_DATA_DIR;
+    process.env.KLAUD_DATA_DIR = settingsDataDir;
+    const { loadSettings, saveSettings, REASONING_EFFORTS } = require('../src/store');
+
+    try {
+      await it('defaults reasoning effort to unset', async () => {
+        const defaults = await loadSettings();
+        assert.equal(defaults.reasoningEffort, '');
+      });
+
+      await it('rejects junk rather than guessing an effort', async () => {
+        const saved = await saveSettings({ reasoningEffort: 'banana' });
+        assert.equal(saved.reasoningEffort, '', 'junk must not become a level Klaud will send');
+        assert.ok(REASONING_EFFORTS.includes(saved.reasoningEffort), saved.reasoningEffort);
+      });
+
+      await it('sends nothing when the stored value is not a string', async () => {
+        assert.equal((await saveSettings({ reasoningEffort: 42 })).reasoningEffort, '');
+        assert.equal((await saveSettings({ reasoningEffort: {} })).reasoningEffort, '');
+        assert.equal((await loadSettings()).reasoningEffort, '');
+      });
+
+      await it('normalises case and surrounding whitespace', async () => {
+        assert.equal((await saveSettings({ reasoningEffort: ' HIGH ' })).reasoningEffort, 'high');
+      });
+
+      await it('round trips a level through save and load', async () => {
+        await saveSettings({ reasoningEffort: 'medium' });
+        // Read it back independently: the value has to survive the file, not
+        // just the object saveSettings happened to return.
+        assert.equal((await loadSettings()).reasoningEffort, 'medium');
+      });
+
+      await it('clears back to unset', async () => {
+        await saveSettings({ reasoningEffort: '' });
+        assert.equal((await loadSettings()).reasoningEffort, '');
+      });
+    } finally {
+      if (previousDataDir === undefined) delete process.env.KLAUD_DATA_DIR;
+      else process.env.KLAUD_DATA_DIR = previousDataDir;
+      await fs.rm(settingsDataDir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
   /* =============================== llm client ============================= */
   await describe('llm client', async () => {
     await it('explains that a missing Authorization header is code 1001', async () => {
@@ -614,6 +868,63 @@ async function main() {
       }
     });
 
+    await it('reads Retry-After in seconds and as an HTTP date', () => {
+      const withHeader = (v) => ({ headers: { get: (n) => (n.toLowerCase() === 'retry-after' ? v : null) } });
+      assert.equal(retryDelayMs(withHeader('5'), ''), 5_000);
+      assert.equal(retryDelayMs(withHeader('0'), ''), 0);
+      const soon = retryDelayMs(withHeader(new Date(Date.now() + 30_000).toUTCString()), '');
+      assert.ok(soon > 25_000 && soon <= 30_000, `got ${soon}`);
+    });
+
+    await it('reads a wait time out of the provider message', () => {
+      const none = { headers: { get: () => null } };
+      assert.equal(retryDelayMs(none, 'The free tier allows 1 request every 1 min. retry in 42s'), 42_000);
+      assert.equal(retryDelayMs(none, 'Please try again in 1 minute.'), 60_000);
+      assert.equal(retryDelayMs(none, 'retry after 250 milliseconds'), 250);
+    });
+
+    await it('falls back to backoff when nothing states a wait', () => {
+      assert.equal(retryDelayMs({ headers: { get: () => null } }, 'Too many requests'), null);
+    });
+
+    // Regression: a per-minute free tier used to be retried after 1.5s and 3s,
+    // burning every attempt and reporting a failure that would have cleared.
+    await it('flags a throttle longer than it will block for', () => {
+      const header = { headers: { get: (n) => (n.toLowerCase() === 'retry-after' ? '600' : null) } };
+      assert.ok(retryDelayMs(header, '') > MAX_RETRY_WAIT_MS);
+    });
+
+    await it('names a provider outage for a bare 5xx, not the user\'s config', async () => {
+      const { describeHttpErrorForTest } = require('../src/llm');
+      // NVIDIA NIM's exact body when its shared endpoint is unhealthy.
+      const url = 'https://integrate.api.nvidia.com/v1/chat/completions';
+      const fakeRes = {
+        status: 500,
+        url,
+        text: async () =>
+          JSON.stringify({ message: 'Failed to generate completions', type: 'Internal Server Error', code: 500 }),
+      };
+      const message = await describeHttpErrorForTest(fakeRes, { url, model: 'nvidia/nemotron-3.5-super-vl-120b-a12b' });
+      assert.match(message, /model server failed/i, message.slice(0, 200));
+      assert.match(message, /not your key or your settings/i, message.slice(0, 260));
+      assert.match(message, /[Rr]etry in a moment/, message.slice(0, 300));
+      // The provider's own words must survive.
+      assert.match(message, /Failed to generate completions/);
+    });
+
+    await it('keeps the Cloudflare explanation for Cloudflare errors', async () => {
+      const { describeHttpErrorForTest } = require('../src/llm');
+      const url = 'https://api.cloudflare.com/client/v4/accounts/a/ai/v1/chat/completions';
+      const fakeRes = {
+        status: 401,
+        url,
+        text: async () => JSON.stringify({ success: false, errors: [{ code: 10000, message: 'Authentication error' }] }),
+      };
+      const message = await describeHttpErrorForTest(fakeRes, { url });
+      assert.match(message, /Cloudflare/, message.slice(0, 200));
+      assert.ok(!/model server failed/i.test(message), 'the generic 5xx hint must not leak into a Cloudflare 401');
+    });
+
     await it('parses every model-list shape seen in the wild', async () => {
       const { listModels } = require('../src/llm');
       const originalFetch = global.fetch;
@@ -708,6 +1019,136 @@ async function main() {
       });
       assert.equal(provider.auth[provider.auth.length - 1], 'Bearer test-key');
       assert.equal(provider.requests[provider.requests.length - 1].tools.length, 1);
+    });
+
+    await it('sends reasoning_effort to OpenAI', async () => {
+      provider.scenario = 'text';
+      const restore = providerFetch(provider.baseUrl);
+      try {
+        await streamChat({
+          baseUrl: 'https://api.openai.com/v1',
+          apiKey: 'k',
+          model: 'mock-small',
+          messages: [{ role: 'user', content: 'hi' }],
+          reasoningEffort: 'high',
+        });
+      } finally {
+        restore();
+      }
+      const body = provider.requests[provider.requests.length - 1];
+      assert.equal(body.reasoning_effort, 'high');
+    });
+
+    await it('sends reasoning.effort, not reasoning_effort, to OpenRouter', async () => {
+      provider.scenario = 'text';
+      const restore = providerFetch(provider.baseUrl);
+      try {
+        await streamChat({
+          baseUrl: 'https://openrouter.ai/api/v1',
+          apiKey: 'k',
+          model: 'anthropic/claude-sonnet-4',
+          messages: [{ role: 'user', content: 'hi' }],
+          reasoningEffort: 'low',
+        });
+      } finally {
+        restore();
+      }
+      const body = provider.requests[provider.requests.length - 1];
+      assert.deepEqual(body.reasoning, { effort: 'low' });
+      assert.equal(body.reasoning_effort, undefined, 'OpenRouter takes the object form, not the OpenAI field');
+    });
+
+    await it('drops the field when the effort is unset', async () => {
+      provider.scenario = 'text';
+      const restore = providerFetch(provider.baseUrl);
+      try {
+        // Configured high, passed empty: unset must win, or the slider would
+        // have no way back to "Provider default".
+        configureReasoningEffort('high');
+        await streamChat({
+          baseUrl: 'https://api.openai.com/v1',
+          apiKey: 'k',
+          model: 'mock-small',
+          messages: [{ role: 'user', content: 'hi' }],
+          reasoningEffort: '',
+        });
+      } finally {
+        restore();
+      }
+      assert.equal(provider.requests[provider.requests.length - 1].reasoning_effort, undefined);
+    });
+
+    // Regression guard for the whole point of the mapping: a provider that does
+    // not document the field must not receive it, because a strict one answers
+    // 400 and the turn dies.
+    await it('sends nothing to a provider that is not known to accept it', async () => {
+      provider.scenario = 'text';
+      configureReasoningEffort('high');
+      await streamChat({
+        baseUrl: provider.baseUrl,
+        apiKey: 'k',
+        model: 'mock-small',
+        messages: [{ role: 'user', content: 'hi' }],
+      });
+      const body = provider.requests[provider.requests.length - 1];
+      assert.equal(body.reasoning_effort, undefined, JSON.stringify(body));
+      assert.equal(body.reasoning, undefined, JSON.stringify(body));
+    });
+
+    await it('sends nothing to NVIDIA NIM, whose reference documents no effort field', async () => {
+      provider.scenario = 'text';
+      const restore = providerFetch(provider.baseUrl);
+      try {
+        configureReasoningEffort('high');
+        await streamChat({
+          baseUrl: 'https://integrate.api.nvidia.com/v1',
+          apiKey: 'k',
+          model: 'nvidia/nemotron-3.5-super-vl-120b-a12b',
+          messages: [{ role: 'user', content: 'hi' }],
+        });
+      } finally {
+        restore();
+      }
+      const body = provider.requests[provider.requests.length - 1];
+      assert.equal(body.reasoning_effort, undefined, JSON.stringify(body));
+      assert.equal(body.reasoning, undefined, JSON.stringify(body));
+    });
+
+    await it('never forwards an unrecognised effort as if it were a level', async () => {
+      provider.scenario = 'text';
+      const restore = providerFetch(provider.baseUrl);
+      try {
+        configureReasoningEffort('high');
+        await streamChat({
+          baseUrl: 'https://api.openai.com/v1',
+          apiKey: 'k',
+          model: 'mock-small',
+          messages: [{ role: 'user', content: 'hi' }],
+          reasoningEffort: 'banana',
+        });
+      } finally {
+        restore();
+      }
+      assert.equal(provider.requests[provider.requests.length - 1].reasoning_effort, undefined);
+    });
+
+    await it('maps a base URL to the right field, and unknown hosts to nothing', () => {
+      const { reasoningEffortFields } = require('../src/llm');
+      assert.deepEqual(reasoningEffortFields('https://api.openai.com/v1', 'medium'), { reasoning_effort: 'medium' });
+      assert.deepEqual(reasoningEffortFields('https://openrouter.ai/api/v1', 'medium'), { reasoning: { effort: 'medium' } });
+      assert.deepEqual(reasoningEffortFields('https://integrate.api.nvidia.com/v1', 'medium'), {});
+      assert.deepEqual(reasoningEffortFields('https://api.groq.com/openai/v1', 'medium'), {});
+      assert.deepEqual(reasoningEffortFields('http://localhost:11434/v1', 'medium'), {});
+      assert.deepEqual(reasoningEffortFields('https://api.openai.com/v1', ''), {});
+      assert.deepEqual(reasoningEffortFields('not a url', 'medium'), {});
+      // A hostname that merely contains "openai" is not OpenAI.
+      assert.deepEqual(reasoningEffortFields('https://openai.example.com/v1', 'medium'), {});
+    });
+
+    await it('resets the configured effort, so later checks start unset', () => {
+      const { configureReasoningEffort } = require('../src/llm');
+      assert.equal(configureReasoningEffort('junk'), '');
+      assert.equal(configureReasoningEffort(''), '');
     });
 
     await it('assembles tool calls streamed across chunks', async () => {
@@ -989,21 +1430,206 @@ async function main() {
       assert.match(events.find((e) => e.type === 'error').message, /API key was rejected/);
     });
 
-    await it('respects the step limit', async () => {
-      provider.scenario = 'loop_tools';
+    await it('respects the step limit when the model never stops, but varies its calls', async () => {
+      provider.scenario = 'busy_no_loop';
       const events = [];
       const result = await runAgentTurn({
-        settings: { ...baseSettings(), maxSteps: 2 },
-        messages: [{ role: 'user', content: 'loop forever' }],
+        settings: { ...baseSettings(), maxSteps: 5 },
+        messages: [{ role: 'user', content: 'keep working' }],
         cwd: tmpRoot,
         onEvent: (e) => events.push(e),
       });
-      assert.equal(result.steps, 2);
+      assert.equal(result.steps, 5);
       assert.equal(result.finished, 'max_steps');
       assert.ok(
         events.some((e) => e.type === 'notice' && /step limit/.test(e.message)),
         `events were: ${events.map((e) => e.type).join(',')}`
       );
+    });
+
+    await it('warns the model before the step limit so it can summarise', async () => {
+      provider.scenario = 'busy_no_loop';
+      const events = [];
+      const result = await runAgentTurn({
+        settings: { ...baseSettings(), maxSteps: 6 },
+        messages: [{ role: 'user', content: 'keep working' }],
+        cwd: tmpRoot,
+        onEvent: (e) => events.push(e),
+      });
+      assert.ok(
+        events.some((e) => e.type === 'notice' && /summarise/i.test(e.message)),
+        `expected a wrap-up notice, got: ${events.filter((e) => e.type === 'notice').map((e) => e.message).join(' | ')}`
+      );
+      // The wrap-up is a system message, not a user one, so the visible
+      // conversation stays exactly what the user typed.
+      const systems = result.messages.filter((m) => m.role === 'system');
+      assert.ok(systems.length >= 1, 'expected a wrap-up system message');
+    });
+
+    await it('breaks an identical repeat instead of running to the cap', async () => {
+      provider.scenario = 'loop_tools';
+      const events = [];
+      const result = await runAgentTurn({
+        settings: { ...baseSettings(), maxSteps: 12 },
+        messages: [{ role: 'user', content: 'loop forever' }],
+        cwd: tmpRoot,
+        onEvent: (e) => events.push(e),
+      });
+
+      // The whole point: it stops early rather than spending all 12 steps.
+      assert.ok(result.steps < 12, `expected to stop early, used ${result.steps} of 12 steps`);
+      assert.equal(result.finished, 'loop_broken');
+      assert.ok(
+        events.some((e) => e.type === 'loop'),
+        `expected a loop event, got: ${events.map((e) => e.type).join(',')}`
+      );
+      assert.ok(
+        events.some((e) => e.type === 'notice' && /identical step/i.test(e.message)),
+        'expected a notice explaining the loop'
+      );
+      assert.ok(events.some((e) => e.type === 'done'), 'expected the turn to end cleanly');
+    });
+
+    await it('still lets the same tool run with different arguments', async () => {
+      provider.scenario = 'vary_args';
+      const events = [];
+      const result = await runAgentTurn({
+        settings: { ...baseSettings(), maxSteps: 4 },
+        messages: [{ role: 'user', content: 'look at several paths' }],
+        cwd: tmpRoot,
+        onEvent: (e) => events.push(e),
+      });
+      // Different arguments are genuine work, so no call may be refused.
+      assert.ok(
+        !events.some((e) => e.type === 'loop'),
+        `no loop should be detected: ${JSON.stringify(events.filter((e) => e.type === 'loop'))}`
+      );
+      assert.ok(
+        events.filter((e) => e.type === 'tool_result').every((r) => r.ok || !r.loop),
+        'no refusal expected'
+      );
+    });
+
+    await it('answers a duplicated call within one step from the first result', async () => {
+      provider.scenario = 'dup_within_step';
+      const events = [];
+      const result = await runAgentTurn({
+        settings: { ...baseSettings(), maxSteps: 1 },
+        messages: [{ role: 'user', content: 'list it twice' }],
+        cwd: tmpRoot,
+        onEvent: (e) => events.push(e),
+      });
+      const results = events.filter((e) => e.type === 'tool_result');
+      assert.equal(results.length, 2, 'both calls must be answered');
+      assert.ok(results[0].ok, 'the first call runs for real');
+      assert.equal(results[1].loop, true, 'the second is answered without re-running');
+      assert.equal(
+        result.messages.filter((m) => m.role === 'tool').length,
+        2,
+        'every tool call needs a result or the next request is malformed'
+      );
+      // With maxSteps of 1 the loop ends at the cap, so the refusal message is
+      // the only thing telling the model not to re-issue the call.
+      assert.match(String(results[1].output), /identical repeat|Do not call it a third time/i);
+    });
+
+    await it('tells the model what to do differently when a tool fails', async () => {
+      provider.scenario = 'failing_tool';
+      const events = [];
+      await runAgentTurn({
+        settings: baseSettings(),
+        messages: [{ role: 'user', content: 'read a file that is not there' }],
+        cwd: tmpRoot,
+        onEvent: (e) => events.push(e),
+      });
+      const failed = events.find((e) => e.type === 'tool_result' && !e.ok);
+      assert.ok(failed, 'expected a failed tool result');
+      assert.match(failed.output, /\[Klaud\]/, 'expected an actionable recovery hint');
+    });
+    await it('asks again when the model stops without saying anything', async () => {
+      provider.scenario = 'silent_stop';
+      const events = [];
+      const result = await runAgentTurn({
+        settings: baseSettings(),
+        messages: [{ role: 'user', content: 'count the files' }],
+        cwd: tmpRoot,
+        onEvent: (e) => events.push(e),
+      });
+      assert.ok(
+        events.some((e) => e.type === 'notice' && /finished without an answer/i.test(e.message)),
+        `expected the nudge notice, got: ${events.filter((e) => e.type === 'notice').map((e) => e.message).join(' | ')}`
+      );
+      assert.match(String(result.finalText), /3 files/, 'the retry answer should be returned');
+      assert.equal(result.finished, 'stop');
+    });
+
+    await it('gives up gracefully when the model stays silent', async () => {
+      provider.scenario = 'silent_always';
+      const events = [];
+      const result = await runAgentTurn({
+        settings: baseSettings(),
+        messages: [{ role: 'user', content: 'count the files' }],
+        cwd: tmpRoot,
+        onEvent: (e) => events.push(e),
+      });
+      // Bounded: one nudge, not an endless ask-again loop.
+      assert.ok(result.steps <= 4, `expected a bounded retry, used ${result.steps} steps`);
+      assert.ok(
+        events.some((e) => e.type === 'notice' && /stopped twice without producing a reply/i.test(e.message)),
+        'expected a notice explaining the silence'
+      );
+    });
+  });
+
+  /* ============================ loop detection =========================== */
+  await describe('loop detection', async () => {
+    await it('treats key order as irrelevant when comparing arguments', () => {
+      assert.equal(
+        callSignature('read_file', { path: 'a.js', limit: 10 }),
+        callSignature('read_file', { limit: 10, path: 'a.js' })
+      );
+    });
+
+    await it('separates calls that differ only in a value', () => {
+      assert.notEqual(
+        callSignature('read_file', { path: 'a.js' }),
+        callSignature('read_file', { path: 'b.js' })
+      );
+    });
+
+    await it('does not confuse different tools with the same arguments', () => {
+      assert.notEqual(callSignature('read_file', { path: 'a' }), callSignature('write_file', { path: 'a' }));
+    });
+
+    await it('survives arguments that cannot be serialised', () => {
+      const circular = {};
+      circular.self = circular;
+      assert.doesNotThrow(() => callSignature('x', circular));
+    });
+
+    await it('suggests listing the directory for a missing file', () => {
+      const hint = suggestRecovery('read_file', 'ENOENT: no such file or directory');
+      assert.match(hint, /list_dir|glob_files/);
+    });
+
+    await it('suggests more context for an ambiguous edit', () => {
+      const hint = suggestRecovery('edit_file', 'the search string is ambiguous: matches 3 times');
+      assert.match(hint, /more surrounding context/i);
+    });
+
+    await it('suggests reading the file when the search text is absent', () => {
+      const hint = suggestRecovery('edit_file', 'Could not find the text to replace');
+      assert.match(hint, /read the file/i);
+    });
+
+    await it('always gives a hint, whatever the failure', () => {
+      assert.match(suggestRecovery('mystery_tool', 'something odd happened'), /\[Klaud\]/);
+    });
+
+    await it('names a different approach in the stuck message', () => {
+      const message = stuckMessage('list_dir({"path":"."})');
+      assert.match(message, /same output|identical/i);
+      assert.match(message, /DIFFERENT call|different/i);
     });
   });
 
