@@ -139,9 +139,12 @@ function icon(id, cls = '') {
   return `<svg class="${cls}" aria-hidden="true"><use href="#${id}"/></svg>`;
 }
 
+/* `write_file` creates or replaces a whole file; `edit_file` changes part of one.
+   They shared a pencil, which made the two indistinguishable at a glance even
+   though only one of them can wipe a file's contents. */
 const TOOL_ICONS = {
   read_file: 'i-file',
-  write_file: 'i-pencil',
+  write_file: 'i-plus',
   edit_file: 'i-pencil',
   list_dir: 'i-folder',
   glob_files: 'i-search',
@@ -149,6 +152,9 @@ const TOOL_ICONS = {
   run_command: 'i-terminal',
   fetch_url: 'i-globe',
   todo_write: 'i-list',
+  list_skills: 'i-brain',
+  read_skill: 'i-brain',
+  task: 'i-sparkle',
 };
 
 function toolIcon(name) {
@@ -502,32 +508,157 @@ function renderTodos(todos) {
   }</div><ul>${items}</ul></div>`;
 }
 
+/**
+ * Pull the file change out of a tool result.
+ *
+ * `write_file` and `edit_file` both return a one-line summary, a blank line, and
+ * then a compact unified diff — the same shape from both tools, so this is a
+ * split rather than a parse. The diff is the most useful thing on screen for a
+ * file operation, far more useful than the raw JSON arguments the card used to
+ * open with.
+ *
+ * A newly created file has no previous version to compare against, so its diff
+ * is every line as an addition. That is deliberate: it renders identically to a
+ * change, which means one code path here instead of two.
+ *
+ * Returns null for every tool that is not a file write, so those keep the plain
+ * result view.
+ */
+function fileChangeFromResult(name, result) {
+  if (name !== 'write_file' && name !== 'edit_file') return null;
+  if (typeof result !== 'string' || !result.trim()) return null;
+
+  const splitAt = result.indexOf('\n\n');
+  if (splitAt === -1) return null;
+  const summary = result.slice(0, splitAt).trim();
+  const body = result.slice(splitAt + 2);
+  if (!body.trim()) return null;
+
+  const lines = [];
+  let added = 0;
+  let removed = 0;
+
+  for (const raw of body.split('\n')) {
+    if (raw.startsWith('@@')) {
+      lines.push({ kind: 'skip', text: raw.replace(/^@@\s*|\s*@@$/g, '') });
+      continue;
+    }
+    if (raw === '') {
+      lines.push({ kind: 'ctx', text: '' });
+      continue;
+    }
+    /* `read_file`'s footer begins "... end of file (13 lines)." and a diff elision
+       is "@@ 2 unchanged lines @@". Both are notes about the text rather than
+       lines of it, and the footer in particular starts with a character that
+       otherwise reads as a deletion — it was counted as one, which inflated
+       every removal total after a read. */
+    if (raw.startsWith('...')) {
+      lines.push({ kind: 'skip', text: raw.replace(/^\.\.\.\s*/, '') });
+      continue;
+    }
+    const prefix = raw[0];
+    const text = raw.slice(1);
+    if (prefix === '+') {
+      added++;
+      lines.push({ kind: 'add', text });
+    } else if (prefix === '-') {
+      removed++;
+      lines.push({ kind: 'del', text });
+    } else {
+      // Anything else (including a stray character) is context, so an unexpected
+      // line is displayed rather than silently dropping the file's content.
+      lines.push({ kind: 'ctx', text: prefix === ' ' ? text : raw });
+    }
+  }
+
+  if (!lines.length) return null;
+  return { summary, lines, added, removed, isDiff: true };
+}
+
+/** `2 additions · 1 removal`, omitting a zero side rather than printing "0". */
+function changeCountLabel(change) {
+  const parts = [];
+  if (change.added) parts.push(`${change.added} addition${change.added === 1 ? '' : 's'}`);
+  if (change.removed) parts.push(`${change.removed} removal${change.removed === 1 ? '' : 's'}`);
+  return parts.join(' · ') || 'no change';
+}
+
 function renderToolCard(call) {
   const stateClass = call.running ? 'running' : call.ok === false ? 'failed' : 'ok';
   const statusIcon = call.running ? 'i-spinner' : call.ok === false ? 'i-x' : 'i-check';
   const summary = toolSummary(call.name, call.args);
-  const meta = [];
-  if (call.durationMs !== undefined && call.durationMs !== null) meta.push(`${call.durationMs} ms`);
-  if (call.denied) meta.push('denied by you');
-  meta.push(call.running ? 'running…' : call.ok === false ? 'failed' : 'ok');
+  const change = call.result && !call.running ? fileChangeFromResult(call.name, call.result) : null;
 
-  const body = call.result
-    ? `<div class="tool-body"><pre>${escapeHtml(prettyResult(call.result))}</pre></div>`
-    : call.running
-      ? ''
-      : '<div class="tool-body"><pre>(no output)</pre></div>';
+  const meta = [];
+  if (call.result && !call.running) {
+    // A one-line taste of what the tool returned, so a collapsed card still says
+    // something about its result instead of only its arguments.
+    meta.push(prettyResult(call.result).split('\n')[0].slice(0, 160));
+  }
+  if (call.durationMs !== undefined && call.durationMs !== null) {
+    meta.push(call.durationMs < 1000 ? `${call.durationMs} ms` : `${(call.durationMs / 1000).toFixed(1)} s`);
+  }
+  if (call.denied) meta.push('denied by you');
+
+  /* The body opens with the change when there is one, because a diff answers the
+     question a tool card raises ("what did it do to my file?") and the JSON
+     arguments do not. The arguments stay available underneath, and the plain
+     result keeps its own view so a read or a command needs no extra click. */
+  let body;
+  if (call.running) {
+    body = '';
+  } else if (change) {
+    /* "Created" means every line is an addition, which is the one case where
+       calling it "Changes" would be misleading — nothing was changed, it is new. */
+    const label = /^Created/i.test(change.summary) ? 'New file' : 'Changes';
+    body = `
+      <div class="tool-change">
+        <div class="tool-change-head">
+          <span class="tool-change-label">${label}</span>
+          <span class="tool-change-count">${escapeHtml(changeCountLabel(change))}</span>
+        </div>
+        <div class="tool-diff">${change.lines
+          .map((line) =>
+            line.kind === 'skip'
+              ? `<div class="dl skip"><span class="dm"></span><span class="dt">${escapeHtml(line.text)}</span></div>`
+              : `<div class="dl ${line.kind}"><span class="dm">${
+                  line.kind === 'add' ? '+' : line.kind === 'del' ? '-' : ' '
+                }</span><span class="dt">${escapeHtml(line.text) || '&nbsp;'}</span></div>`
+          )
+          .join('')}</div>
+      </div>
+      <details class="tool-args">
+        <summary>${icon('i-chevron', 'args-chev')}<span>Arguments</span></summary>
+        <pre>${escapeHtml(prettyArgs(call.args))}</pre>
+      </details>`;
+  } else {
+    const text = call.result ? prettyResult(call.result) : '(no output)';
+    body = `<div class="tool-body"><pre>${escapeHtml(text)}</pre></div>
+      <details class="tool-args">
+        <summary>${icon('i-chevron', 'args-chev')}<span>Arguments</span></summary>
+        <pre>${escapeHtml(prettyArgs(call.args))}</pre>
+      </details>`;
+  }
 
   return `
-    <details class="tool ${stateClass}" ${call.ok === false ? 'open' : ''} data-tool="${escapeHtml(call.id)}">
+    <details class="tool ${stateClass}${change ? ' has-change' : ''}" ${
+      call.ok === false ? 'open' : ''
+    } data-tool="${escapeHtml(call.id)}">
       <summary class="tool-head">
-        ${icon('i-chevron', 'chev')}
         ${icon(toolIcon(call.name), 'tool-icon')}
         <span class="name">${escapeHtml(call.name)}</span>
         <span class="arg">${escapeHtml(summary)}</span>
+        <span class="tool-state">${icon(statusIcon, 'state-icon')}${
+          change
+            ? `<span class="tool-count">${
+                change.added ? `<span class="plus">+${change.added}</span>` : ''
+              }${change.removed ? `<span class="minus">−${change.removed}</span>` : ''}</span>`
+            : ''
+        }</span>
+        ${icon('i-chevron', 'chev')}
       </summary>
-      <div class="tool-body"><pre>${escapeHtml(prettyArgs(call.args))}</pre></div>
       ${body}
-      <div class="tool-meta">${meta.map(escapeHtml).join('<span>·</span>')}</div>
+      ${meta.length ? `<div class="tool-meta">${meta.map(escapeHtml).join('<span>·</span>')}</div>` : ''}
     </details>`;
 }
 
@@ -2692,6 +2823,11 @@ async function boot() {
     version: 1,
     renderChrome,
     shortModelName,
+    // Exposed so the browser suite can test the diff reader directly. It turns
+    // tool output into structured lines, and a silent break there would show the
+    // user a plausible-looking but wrong diff rather than an error.
+    fileChangeFromResult,
+    changeCountLabel,
   };
 
   if (!settings.token) {

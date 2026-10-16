@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Klaud test suite â€” no framework, no dependencies.
+ * Klaud test suite — no framework, no dependencies.
  *
  *   node test/run.js
  *

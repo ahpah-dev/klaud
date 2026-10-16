@@ -1166,60 +1166,87 @@ details.tool + .prose {
 .tools {
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: 2px;
   margin-bottom: 12px;
 }
 
-/* Sized to its own content rather than the full column. A tool call is a
-   footnote to the transcript, not a section of it — at full width with the
-   chevron pushed to the far edge it read as a divider between messages. */
+/**
+ * A tool call is a footnote to the transcript, not a section of it.
+ *
+ * This used to be a bordered, filled pill sitting inside another pill — a card
+ * in a card, which is the "generic" look it had. It is now a flat row that only
+ * draws a box once it is open, so a run of six calls reads as six lines of
+ * activity rather than six boxes. The row is sized to its own content but capped,
+ * because `.app > .main` centres its children and a full-width row read as a
+ * divider between messages.
+ */
 .tool {
-  display: inline-block;
-  max-width: 100%;
-  border: 1px solid var(--border);
-  border-radius: 11px;
-  background: var(--surface-2);
-  overflow: hidden;
-  transition: border-color 0.14s var(--ease);
+  display: block;
+  width: fit-content;
+  max-width: min(100%, 620px);
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: none;
+  transition: background-color 0.14s var(--ease), border-color 0.14s var(--ease);
 }
 
+.tool:hover {
+  background: var(--surface-2);
+}
+
+/* Open, it is a container: full width and a real surface, so the diff below has
+   something to sit inside. */
 .tool[open] {
-  display: block;
+  width: 100%;
+  max-width: 100%;
+  border-color: var(--border);
+  background: var(--surface-2);
 }
 
 .tool.running {
-  border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+  border-color: color-mix(in srgb, var(--accent) 26%, var(--border));
+  background: color-mix(in srgb, var(--accent) 4%, transparent);
 }
 
 .tool.failed {
-  border-color: color-mix(in srgb, var(--err) 45%, var(--border));
+  border-color: color-mix(in srgb, var(--err) 32%, var(--border));
+  background: color-mix(in srgb, var(--err) 4%, transparent);
 }
 
 .tool-head {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 7px 11px;
+  gap: 9px;
+  padding: 6px 9px 6px 7px;
   text-align: left;
   font-size: 13px;
   color: var(--text-2);
   list-style: none;
   user-select: none;
   cursor: pointer;
+  border-radius: 10px;
 }
 
 .tool-head::-webkit-details-marker {
   display: none;
 }
 
-/* Sits beside the summary instead of being flung to the right edge. */
+/* Hidden until the row is hovered or open, which keeps a column of finished
+   calls quiet — the same trick the chat list rows use. Focus-visible keeps it
+   reachable by keyboard. */
 .tool-head .chev {
   width: 13px;
   height: 13px;
   flex: none;
-  transition: transform 0.16s var(--ease);
+  transition: transform 0.16s var(--ease), opacity 0.14s var(--ease);
   color: var(--text-3);
-  opacity: 0.7;
+  opacity: 0;
+}
+
+.tool:hover .tool-head .chev,
+.tool[open] .tool-head .chev,
+.tool-head:focus-visible .chev {
+  opacity: 0.75;
 }
 
 details[open] > .tool-head .chev {
@@ -1228,15 +1255,15 @@ details[open] > .tool-head .chev {
 
 .tool-head .name {
   font-family: var(--font-mono);
-  font-size: 12.5px;
-  font-weight: 600;
-  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-3);
+  flex: none;
 }
 
 .tool-head .arg {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--text-3);
+  font-size: 13px;
+  color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1244,22 +1271,61 @@ details[open] > .tool-head .chev {
   flex: 1;
 }
 
+/* The right-hand status: a tick, a spinner, or a cross, plus the change counts
+   when there is a diff. Pushed away from the label so a column of rows lines up. */
+.tool-state {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  margin-left: auto;
+  color: var(--text-3);
+}
+
+.tool-state .state-icon {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+
+.tool-count {
+  display: inline-flex;
+  gap: 5px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: -0.01em;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.tool-count .plus {
+  color: color-mix(in srgb, var(--ok) 72%, var(--text-3));
+}
+
+.tool-count .minus {
+  color: color-mix(in srgb, var(--err) 70%, var(--text-3));
+}
+
+.tool.ok .tool-state .state-icon {
+  color: color-mix(in srgb, var(--ok) 70%, var(--text-3));
+}
+
+.tool.failed .tool-state .state-icon {
+  color: var(--err);
+}
+
 .tool-icon {
-  width: 16px;
-  height: 16px;
+  width: 15px;
+  height: 15px;
   flex: none;
   color: var(--text-3);
 }
 
-.tool.ok .tool-icon {
-  color: var(--ok);
-}
-
-.tool.failed .tool-icon {
-  color: var(--err);
-}
-
 .tool.running .tool-icon {
+  color: var(--accent);
+}
+
+.tool.running .tool-state .state-icon {
   color: var(--accent);
   animation: spin 1.1s linear infinite;
 }
@@ -1268,12 +1334,166 @@ details[open] > .tool-head .chev {
   to { transform: rotate(360deg); }
 }
 
+/* ------------------------- the change itself ---------------------------- */
+
+/**
+ * The diff. This is the reason to open a card: "what did it do to my file?" is
+ * the question, and the JSON arguments never answered it.
+ */
+.tool-change {
+  border-top: 1px solid var(--border);
+}
+
+.tool-change-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 7px 12px 6px;
+}
+
+.tool-change-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.tool-change-count {
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+
+.tool-diff {
+  background: var(--bg-sunken);
+  border-top: 1px solid var(--border);
+  padding: 8px 0;
+  max-height: 420px;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.tool-diff .dl {
+  display: flex;
+  gap: 0;
+  /* The marker column is fixed so the text of every line lines up whether the
+     line was added, removed or kept. */
+  padding: 0 12px 0 0;
+}
+
+.tool-diff .dm {
+  flex: none;
+  width: 26px;
+  text-align: center;
+  color: var(--text-3);
+  opacity: 0.55;
+  user-select: none;
+}
+
+.tool-diff .dt {
+  flex: 1;
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text-2);
+}
+
+.tool-diff .dl.add {
+  background: color-mix(in srgb, var(--ok) 11%, transparent);
+}
+
+.tool-diff .dl.add .dm {
+  color: var(--ok);
+  opacity: 1;
+}
+
+.tool-diff .dl.del {
+  background: color-mix(in srgb, var(--err) 10%, transparent);
+}
+
+.tool-diff .dl.del .dm {
+  color: var(--err);
+  opacity: 1;
+}
+
+/* The elision marker between hunks: quiet, and obviously not code. */
+.tool-diff .dl.skip {
+  color: var(--text-3);
+  font-size: 11px;
+  font-style: italic;
+}
+
+.tool-diff .dl.skip .dt {
+  color: var(--text-3);
+  padding-left: 4px;
+}
+
+/* The arguments are still one click away, but they are no longer what the card
+   opens with — most of the time the diff or the result is the whole answer. */
+.tool-args {
+  border-top: 1px solid var(--border);
+}
+
+.tool-args > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  font-size: 11.5px;
+  color: var(--text-3);
+  cursor: pointer;
+  list-style: none;
+}
+
+.tool-args > summary::-webkit-details-marker {
+  display: none;
+}
+
+/* The chevron is the affordance: without it "Arguments" read as a caption rather
+   than something that opens. */
+.tool-args .args-chev {
+  width: 11px;
+  height: 11px;
+  flex: none;
+  opacity: 0.6;
+  transition: transform 0.16s var(--ease);
+}
+
+.tool-args[open] > summary .args-chev {
+  transform: rotate(90deg);
+}
+
+.tool-args > summary:hover {
+  color: var(--text-2);
+}
+
+.tool-args > pre {
+  margin: 0;
+  padding: 0 12px 10px;
+  background: none;
+  overflow: auto;
+  max-height: 260px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-3);
+}
+
 .tool-body {
   border-top: 1px solid var(--border);
   background: var(--bg-sunken);
   padding: 10px 12px;
   max-height: 420px;
   overflow: auto;
+}
+
+/* The plain-result body sits directly under the head when no diff is shown, so
+   it should not draw a second divider right beneath the header's own edge. */
+.tool.has-change .tool-body,
+.tool-change + .tool-args {
+  border-top: 1px solid var(--border);
 }
 
 .tool-body pre {
@@ -1286,13 +1506,17 @@ details[open] > .tool-head .chev {
   color: var(--text-2);
 }
 
+/* Sans-serif on purpose. This line carries the tool's own summary prose, which
+   contains real punctuation, and the monospace stack on Windows has no U+2212
+   minus or em dash — they rendered as .notdef boxes. The counts above keep the
+   monospace face, because those are numbers. */
 .tool-meta {
   padding: 6px 12px 8px;
   border-top: 1px solid var(--border);
-  font-size: 11px;
+  font-size: 11.5px;
   color: var(--text-3);
   display: flex;
-  gap: 12px;
+  gap: 10px;
   flex-wrap: wrap;
 }
 

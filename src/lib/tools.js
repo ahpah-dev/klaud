@@ -454,9 +454,14 @@ const TOOLS = [
       const after = await fs.readFile(abs, 'utf8');
       const lines = after.split('\n').length;
       const verb = existing ? 'Replaced' : 'Created';
-      const diff = existing ? `\n\nDiff:\n${lineDiff(previous, after)}` : '';
-      const preview = after.split('\n').slice(0, 40).join('\n');
-      return `${verb} ${rel} — ${humanSize(Buffer.byteLength(after, 'utf8'))}, ${lines} lines.${diff}\n\nFirst lines as written:\n${preview}${lines > 40 ? '\n...' : ''}`;
+      /* Always a diff, including for a file that did not exist, where the diff is
+       * every line as an addition: that reads the same way as a change, so the
+       * interface has one thing to render instead of two. The "Diff:" label and
+       * the "First lines as written" preview that used to follow it are gone —
+       * the preview duplicated what the diff already shows, and the model wrote
+       * the content itself, so echoing 40 lines of it back bought nothing. */
+      const diff = lineDiff(previous, after);
+      return `${verb} ${rel} — ${humanSize(Buffer.byteLength(after, 'utf8'))}, ${lines} lines.\n\n${diff}`;
     },
   },
 

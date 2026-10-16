@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Real browser test â€” loads the app in headless Chrome and drives it.
+ * Real browser test — loads the app in headless Chrome and drives it.
  *
  *   node test/browser.js
  *
@@ -60,7 +60,7 @@ async function freePort() {
 function startMock() {
   return new Promise((resolve) => {
     const server = http.createServer(async (req, res) => {
-      // Read the body exactly once â€” draining the stream first leaves nothing
+      // Read the body exactly once — draining the stream first leaves nothing
       // for the JSON parse, which silently makes the provider stateless.
       const chunks = [];
       for await (const chunk of req) chunks.push(chunk);
@@ -81,10 +81,10 @@ function startMock() {
       const w = (o) => res.write(`data: ${JSON.stringify(o)}\n\n`);
 
       if (alreadyRan) {
-        w({ model: 'browser-model', choices: [{ index: 0, delta: { content: 'Done â€” the file is on disk.' } }] });
+        w({ model: 'browser-model', choices: [{ index: 0, delta: { content: 'Done — the file is on disk.' } }] });
         w({ model: 'browser-model', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] });
       } else {
-        w({ model: 'browser-model', choices: [{ index: 0, delta: { content: 'Sure â€” writing the file now.' } }] });
+        w({ model: 'browser-model', choices: [{ index: 0, delta: { content: 'Sure — writing the file now.' } }] });
         w({
           model: 'browser-model',
           choices: [
@@ -1614,23 +1614,95 @@ class Browser {
       path.join(PROJECT, 'docs', 'screenshots', 'screenshot-cowork-composer.png')
     );
 
-    // Not an assertion, on purpose: the settings store does not own `mode` yet
-    // (a sibling task does), so this records what actually happened to the PATCH
-    // and where the reload above got the mode from.
+    // `mode` is a real setting now, so a reload is served by the server rather
+    // than by the browser's fallback copy. Asserted, because the fallback made
+    // this look like it worked while the setting was silently not persisted.
     const serverMode = await (async () => {
       const res = await fetch(`${appUrl}/api/settings`, { headers: { 'x-klaud-token': token } });
       return (await res.json()).mode;
     })();
-    console.log(
-      `  mode on the server: ${
-        serverMode === undefined
-          ? 'not stored (the settings API accepts the PATCH and drops the unknown key); the reload was carried by the browser copy'
-          : JSON.stringify(serverMode)
-      }`
-    );
+    check('the mode is stored on the server, not only in the browser',
+      serverMode === 'chat' || serverMode === 'cowork', JSON.stringify(serverMode));
     check('no exceptions from the mode toggle', browser.exceptions.length === 0, browser.exceptions.join('\n'));
     check('no console errors from the mode toggle', browser.consoleMessages.length === 0,
       JSON.stringify(browser.consoleMessages));
+
+    /* ---------- the tool card reads the file change correctly ----------
+       `fileChangeFromResult` turns a tool's raw output into structured diff lines.
+       A silent break there would render a plausible but wrong diff, which is
+       worse than showing nothing, so it is tested directly as well as visually. */
+    const diffCases = await browser.evaluate(`
+      const { fileChangeFromResult, changeCountLabel } = window.__klaud;
+
+      const edit = [
+        'Edited server.js (1 replacement).',
+        '',
+        '@@ 2 unchanged lines @@',
+        ' function start(port) {',
+        '-    res.writeHead(200);',
+        '-    res.end("hello");',
+        '+    res.writeHead(200, { "content-type": "text/plain" });',
+        '+    res.end("hello from Klaud");',
+        '+    // keep-alive tuned',
+        '   });',
+      ].join('\\n');
+      const e = fileChangeFromResult('edit_file', edit);
+
+      const created = ['Created README.md - 26 B, 4 lines.', '', '+# Demo', ' ', '+Created by Klaud.', '+'].join('\\n');
+      const c = fileChangeFromResult('write_file', created);
+
+      // read_file's footer begins with "..." which, unguarded, reads as a deletion.
+      const read = ['# server.js (228 B)', '    1 | const x = 1;', '... end of file (1 lines).'].join('\\n');
+
+      return {
+        editAdded: e && e.added,
+        editRemoved: e && e.removed,
+        editLabel: e && changeCountLabel(e),
+        editSkipLines: e ? e.lines.filter((l) => l.kind === 'skip').length : -1,
+        editFirstKind: e && e.lines[0] && e.lines[0].kind,
+        editFirstText: e && e.lines[0] && e.lines[0].text,
+        editCtxCount: e ? e.lines.filter((l) => l.kind === 'ctx').length : -1,
+        editCtxFirst: e && e.lines.find((l) => l.kind === 'ctx')?.text,
+        createdAdded: c && c.added,
+        createdRemoved: c && c.removed,
+        createdSummary: c && c.summary,
+        readToolIsNull: fileChangeFromResult('read_file', read) === null,
+        commandIsNull: fileChangeFromResult('run_command', 'v20.0.0') === null,
+        emptyIsNull: fileChangeFromResult('write_file', '') === null,
+        noDiffIsNull: fileChangeFromResult('write_file', 'Wrote x.txt (1 line).') === null,
+        countsZeroSide: changeCountLabel({ added: 3, removed: 0 }),
+        countsBoth: changeCountLabel({ added: 1, removed: 1 }),
+        countsNone: changeCountLabel({ added: 0, removed: 0 })
+      };
+    `);
+
+    check('an edit reports its true addition count', diffCases.editAdded === 3, JSON.stringify(diffCases));
+    check('an edit reports its true removal count', diffCases.editRemoved === 2, JSON.stringify(diffCases));
+    check('the elision marker becomes a note, not a line of code',
+      diffCases.editSkipLines === 1, String(diffCases.editSkipLines));
+    check('the first line is the elision note', diffCases.editFirstKind === 'skip',
+      String(diffCases.editFirstKind));
+    check('the elision note drops its @@ markers and keeps the words',
+      /unchanged line/.test(String(diffCases.editFirstText)) && !String(diffCases.editFirstText).includes('@@'),
+      String(diffCases.editFirstText));
+    check('genuine context lines are kept as context',
+      diffCases.editCtxCount === 2 && diffCases.editCtxFirst === 'function start(port) {',
+      `${diffCases.editCtxCount} context lines, first=${JSON.stringify(diffCases.editCtxFirst)}`);
+    check('a created file is all additions and no removals',
+      diffCases.createdAdded === 3 && diffCases.createdRemoved === 0, JSON.stringify(diffCases));
+    check('the summary line is preserved', /^Created README\.md/.test(String(diffCases.createdSummary)),
+      String(diffCases.createdSummary));
+    check('a read is not treated as a file change', diffCases.readToolIsNull === true);
+    check('a command is not treated as a file change', diffCases.commandIsNull === true);
+    check('an empty result is not treated as a file change', diffCases.emptyIsNull === true);
+    check('output with no diff section is not treated as a file change',
+      diffCases.noDiffIsNull === true);
+    check('a zero side is omitted from the count label', diffCases.countsZeroSide === '3 additions',
+      String(diffCases.countsZeroSide));
+    check('both sides are shown together', diffCases.countsBoth === '1 addition · 1 removal',
+      String(diffCases.countsBoth));
+    check('no change is stated rather than shown as 0/0', diffCases.countsNone === 'no change',
+      String(diffCases.countsNone));
 
     console.log(`\n  screenshots: ${welcomeShot}, ${turnShot}, ${modalShot}, ${darkShot}, ${freeShot}, ${setupShot}, ${failShot}, ${coworkShot}`);
   } finally {
