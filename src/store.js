@@ -40,8 +40,42 @@ async function writeJsonAtomic(file, value) {
 
 const SETTING_KEYS = [
   'baseUrl', 'apiKey', 'model', 'temperature', 'systemPrompt', 'approvalMode',
-  'workspace', 'maxSteps', 'maxContextChars', 'reasoningEffort',
+  'workspace', 'maxSteps', 'maxContextChars', 'reasoningEffort', 'mode',
+  'enabledPlugins',
 ];
+
+/**
+ * Which plugins are switched on, as `{ pluginName: true|false }`.
+ *
+ * A map rather than a list so "off" is expressible for a plugin that ships with
+ * `defaultEnabled: true` — with a list, turning one off would be impossible. An
+ * absent key means "use the plugin's own default", which is why this must stay
+ * unset rather than defaulting to `{}` and implying every plugin is off.
+ */
+function normalizeEnabledPlugins(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const out = {};
+  for (const [name, on] of Object.entries(value)) {
+    const key = String(name || '').trim();
+    if (!key) continue;
+    if (on === true || on === 'true') out[key] = true;
+    else if (on === false || on === 'false') out[key] = false;
+  }
+  return out;
+}
+
+/**
+ * Chat is a conversation; Cowork is the same agent aimed at longer work. The
+ * mode only changes how a turn is framed and presented — it is not a permission
+ * setting, so an unknown value falls back to chat rather than to something with
+ * more autonomy.
+ */
+const MODES = ['chat', 'cowork'];
+
+function normalizeMode(value) {
+  const mode = String(value || '').trim().toLowerCase();
+  return MODES.includes(mode) ? mode : 'chat';
+}
 
 /**
  * The reasoning levels the UI offers. Empty is the unset state and must stay
@@ -65,6 +99,8 @@ async function loadSettings() {
   merged.maxSteps = clamp(Number(merged.maxSteps), 1, 40, 12);
   merged.maxContextChars = clamp(Number(merged.maxContextChars), 8_000, 2_000_000, DEFAULTS.maxContextChars);
   merged.reasoningEffort = normalizeReasoningEffort(merged.reasoningEffort);
+  merged.mode = normalizeMode(merged.mode);
+  merged.enabledPlugins = normalizeEnabledPlugins(merged.enabledPlugins);
   if (!['auto', 'ask', 'readonly'].includes(merged.approvalMode)) merged.approvalMode = 'auto';
   return merged;
 }
@@ -83,6 +119,8 @@ async function saveSettings(patch) {
   next.maxSteps = clamp(Number(next.maxSteps), 1, 40, 12);
   next.maxContextChars = clamp(Number(next.maxContextChars), 8_000, 2_000_000, DEFAULTS.maxContextChars);
   next.reasoningEffort = normalizeReasoningEffort(next.reasoningEffort);
+  next.mode = normalizeMode(next.mode);
+  next.enabledPlugins = normalizeEnabledPlugins(next.enabledPlugins);
   if (!['auto', 'ask', 'readonly'].includes(next.approvalMode)) next.approvalMode = 'auto';
   await writeJsonAtomic(settings, next);
   return next;

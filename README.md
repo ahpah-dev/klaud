@@ -8,7 +8,122 @@ interface.
 Bring your own key, or bring no key at all. Nothing else to install: no npm
 packages, no build step, no database. Node 18+ and the standard library.
 
-### The greeting changes with the clock
+## Cowork
+
+Cowork is the same agent pointed at longer work instead of a conversation. Pick
+**Cowork** in the composer and Klaud plans, works through the steps, and shows
+its task list as it goes. Nothing about your setup changes — same provider, same
+workspace, same permissions — so it is a mode, not a second product.
+
+### Skills
+
+A skill is a procedure you write once and Klaud loads when it is relevant, or
+when you ask for it by name with `/skill-name`. Unlike a system prompt, a skill's
+body is only read when it is used, so a long checklist costs nothing until you
+need it.
+
+```
+~/.klaud/skills/<name>/SKILL.md            personal, every project
+<workspace>/.klaud/skills/<name>/SKILL.md  project, committed with the code
+```
+
+```markdown
+---
+name: house-style
+description: House conventions for any file in this project. Use when writing or reviewing code.
+when_to_use: writing code, reviewing code, style questions
+---
+
+Two-space indent, single quotes, semicolons. Never use `var`.
+```
+
+| Field | Meaning |
+| --- | --- |
+| `name` | Defaults to the folder name. Must be a slug (`[a-z0-9-]`). |
+| `description` | What it does and **when to use it**. This is what Klaud matches on. |
+| `when_to_use` | Trigger phrases, shown alongside the description. |
+| `disable-model-invocation` | `true` keeps Klaud from applying it on its own; `/name` still works. |
+| `allowed-tools` | Recorded and shown to the model. **Not enforced** — see below. |
+| `metadata` | Anything you like. Ignored, never a crash. |
+
+A skill folder can hold supporting files, and the body can reference its own
+directory with `${KLAUD_SKILL_DIR}`. Project skills shadow personal ones of the
+same name.
+
+Two honest notes. First, `allowed-tools` is a *request*, not a wall: Klaud tells
+the model which tools the skill declares and tells it to stay inside them, but
+nothing prevents a call outside the list. Second, a skill's body is treated as
+**untrusted**: it can come from a repository you cloned, so it arrives wrapped in
+a delimiter marking it as user-authored procedure rather than part of Klaud's own
+rules. It cannot change Klaud's tools or permissions, and Klaud is told to report
+a skill that claims to.
+
+### Plugins
+
+A plugin bundles skills and subagents so one folder sets up a whole workflow.
+
+```
+~/.klaud/plugins/<name>/.claude-plugin/plugin.json   optional manifest
+~/.klaud/plugins/<name>/skills/<skill>/SKILL.md
+~/.klaud/plugins/<name>/agents/<agent>.md
+```
+
+The manifest is optional — without it, whatever sits in the standard layout is
+loaded and the plugin takes its folder's name. Supported fields: `name`,
+`displayName`, `version`, `description`, `author` (string or object), `homepage`,
+`repository`, `license`, `keywords`, `defaultEnabled`, `dependencies`, and the
+`skills` / `agents` path overrides. Every declared path must stay inside the
+plugin's own folder; anything escaping with `../`, an absolute path, or a symlink
+is rejected with a warning and never followed.
+
+**What Klaud does not do:** real plugins can bundle hooks and MCP servers. Klaud
+has neither, and a manifest declaring them gets an explicit warning saying so
+rather than appearing to work.
+
+### Subagents
+
+A subagent is a delegate with its own context, so a long side task does not fill
+the main conversation.
+
+```markdown
+---
+name: file-counter
+description: Counts files and reports the number. Use for quick inventory questions.
+tools: list_dir
+model: inherit
+---
+
+Count the files you are asked about and reply with just the number.
+```
+
+Klaud delegates to one with the `task` tool, choosing by description. Two
+guarantees, both enforced in the loop rather than trusted to the model:
+
+- **A subagent cannot delegate further.** `task` is removed from its tool schema
+  entirely, so it cannot reach for it at all. Without that, one bad decision
+  becomes an unbounded fan-out of real API calls on your key.
+- **A subagent cannot exceed your session.** Its `tools` list narrows what it may
+  use; it can never gain a tool the session lacks, and read-only mode blocks
+  delegation outright because `task` counts as execution.
+
+A subagent that stops without producing an answer is reported to Klaud as a
+failure with the reason, not as a success with no text — otherwise the main model
+relays a blank as though it were a result.
+
+### Where extensions live
+
+`GET /api/extensions` reports what is actually loaded, and the paths are:
+
+| Kind | Personal | Project |
+| --- | --- | --- |
+| Skills | `~/.klaud/skills/` | `<workspace>/.klaud/skills/` |
+| Plugins | `~/.klaud/plugins/` | `<workspace>/.klaud/plugins/` |
+| Subagents | `~/.klaud/agents/` | `<workspace>/.klaud/agents/` |
+
+Everything is read from disk on each turn, so a skill added while Klaud is
+running is picked up on your next message — no restart.
+
+## The greeting changes with the clock
 
 An empty chat says something different depending on the hour, so the app does not
 open with the same four words every single time. "Here we go!" is the anchor and
@@ -404,6 +519,7 @@ Everything under `/api/*` needs the `x-klaud-token` header.
 | `GET` `PUT` `DELETE` | `/api/chats/:id` | Read, save or delete one |
 | `GET` | `/api/fs` | Browse directories for the workspace picker |
 | `POST` | `/api/fs/mkdir` | Create a folder from the workspace picker |
+| `GET` | `/api/extensions` | What skills, plugins and subagents are actually loaded |
 
 ## Testing
 
@@ -411,7 +527,7 @@ Everything under `/api/*` needs the `x-klaud-token` header.
 npm test
 ```
 
-623 checks in total, no test framework, no dependencies. Every suite is
+1060 checks in total, no test framework, no dependencies. Every suite is
 self-contained: they spawn their own servers on throwaway data directories, so
 running the tests can never disturb your real configuration.
 
@@ -420,6 +536,10 @@ running the tests can never disturb your real configuration.
 | `test/run.js` | 120 | Tool sandbox, shell exit codes, LLM client, agent loop, **loop detection**, reasoning-effort wire format, retry timing, **time-of-day greeting**, history pruning |
 | `test/markdown.mjs` | 29 | Markdown rendering and HTML escaping |
 | `test/ui-static.js` | 38 | Element ids, icon sprite, CSS coverage, module wiring, working-indicator animations |
+| `test/skills.js` | 70 | Frontmatter parsing, discovery, shadowing, the slash-command parser, and that a skill body is wrapped as untrusted |
+| `test/plugins.js` | 124 | Manifests, optional manifests, path containment against `../` and symlink escapes, dependencies, and that hooks and MCP are reported as unimplemented |
+| `test/agents.js` | 143 | Subagent definitions, all three `tools` shapes, shadowing, and the `task` shim's behaviour with and without a runner |
+| `test/extensions.js` | 67 | The joins: a skill reaching a real request, **a subagent not being offered the `task` tool**, honest reporting of an answerless subagent, and that a malformed plugin degrades to a warning |
 | `test/cloudflare-token.mjs` | 16 | Account IDs are read from every token claim shape, and never guessed |
 | `test/cloudflare-setup.js` | 42 | The setup path against a stand-in Cloudflare API, including empty account lists |
 | `test/cloudflare-errors.js` | 51 | Every Cloudflare failure explains itself; a bare "unknown" is impossible |
@@ -427,7 +547,7 @@ running the tests can never disturb your real configuration.
 | `test/e2e-http.js` | 37 | The full HTTP and SSE API, plus malformed-request resilience |
 | `test/auth-recovery.js` | 21 | A stale session token can be recovered with one click |
 | `test/folder-picker.js` | 30 | Typing a path, creating a folder, switching workspace |
-| `test/browser.js` | 160 | The app driven in headless Chrome, start to finish, including that a mouse click paints no accent ring |
+| `test/browser.js` | 193 | The app driven in headless Chrome, start to finish: no accent ring on a mouse click, the Chat/Cowork toggle and its persisted mode, and that the Cowork empty state offers longer-task starters |
 
 `test/browser.js` is the important one. It launches Chrome, loads the real page,
 and fails on any uncaught exception or console error. It then types a message,

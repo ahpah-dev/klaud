@@ -3989,3 +3989,131 @@ body {
 .pcard.best {
   border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
 }
+
+/* ==========================================================================
+   Chat and Cowork.
+   One composer, two modes. The switch is a segmented control sitting with the
+   other composer chips rather than a second screen: quiet, low contrast, and
+   only the selected segment filled — the same visual weight as the chips beside
+   it, because it is a setting, not an action.
+   ========================================================================== */
+
+.mode-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 99px;
+  background: var(--surface-2);
+  flex: none;
+}
+
+.mode-seg {
+  padding: 4px 10px;
+  border-radius: 99px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--text-3);
+  transition: background 0.12s var(--ease), color 0.12s var(--ease);
+}
+
+.mode-seg:hover {
+  color: var(--text);
+}
+
+/* The selected segment is *subtly* filled: paper on paper plus the smallest
+   shadow in the system. A terracotta fill here would be the loudest thing in
+   the composer for a control used twice a session. */
+.mode-seg[aria-checked="true"] {
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 500;
+  box-shadow: var(--shadow-sm);
+}
+
+/* A focus ring belongs to keyboard users. `[data-kb]` is set by a Tab press and
+   cleared by any pointer, so clicking a segment never paints one — the same
+   mechanism the prompt box uses, and the reason it cannot regress. */
+[data-kb] .mode-seg:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
+}
+
+/* The mode as a quiet badge on the assistant row, so a transcript read later
+   says which mode the turn belongs to. Neutral, not accent: the row already has
+   the model name and sometimes a live step note. */
+.role-mode {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-2);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 99px;
+  padding: 0 7px;
+}
+
+/* Cowork's defining behaviour is working through a task list, so in that mode
+   the list is the plan of record: an accent rail down the left, a label that
+   names the mode, and slightly larger rows. The chat-mode list is unchanged. */
+.todos.cowork {
+  border-color: color-mix(in srgb, var(--accent) 32%, var(--border));
+  border-left: 3px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  background: var(--surface);
+  padding: 12px 15px 13px;
+}
+
+.todos.cowork .head {
+  color: var(--accent-text);
+  font-size: 11.5px;
+}
+
+.todos.cowork li {
+  font-size: 14.5px;
+}
+
+/* The mode switch is a fourth control in the composer row, so the row can now
+   run out of room on a narrow window or with a long working-directory path. The
+   chips give up width with an ellipsis instead of breaking their labels over two
+   lines — "auto-" / "run" was what squeezing them produced. */
+.composer-row .chip-select {
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.composer-row .chip-select span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The permission chip carries the shortest label in the row and the one a user
+   reads at a glance, so it never truncates: the two data chips — a path and a
+   model id, both shown in full elsewhere — absorb the squeeze instead. */
+.composer-row #composer-mode {
+  flex: none;
+}
+
+/* --- Cowork's empty state ------------------------------------------------ */
+/* Deliberately outside `.suggestions`. The empty state hides that block on
+   purpose (see "Empty state" above), which is right for the four coding
+   starters but would leave Cowork suggesting nothing at all on the one screen
+   where it has to explain itself. Same `.suggestion` buttons, so the markup,
+   hover and the `data-prompt` submit path are identical. */
+.cowork-starters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 8px;
+  max-width: 620px;
+  margin: 20px auto 0;
+  text-align: left;
+}
+
+.cowork-label {
+  grid-column: 1 / -1;
+  font-size: 12.5px;
+  color: var(--text-3);
+  text-align: center;
+}

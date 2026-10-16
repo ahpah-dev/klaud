@@ -74,6 +74,9 @@ const DEFAULTS = {
   // Empty means "send nothing", so behaviour is unchanged for anyone who never
   // touches the slider — and for every provider that would reject the field.
   reasoningEffort: '',
+  // 'chat' is a conversation; 'cowork' is the same agent pointed at longer work.
+  // The mode changes framing and presentation, not permissions.
+  mode: 'chat',
   // Characters of conversation history sent per request. ~80k characters is
   // roughly 20k tokens, which leaves room for tools and output on every
   // mainstream model. Older turns are trimmed, newest first kept.

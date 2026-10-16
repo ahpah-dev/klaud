@@ -92,6 +92,9 @@ const state = {
   unauthorized: false,
   // The greeting currently on screen, so a re-render does not reshuffle it.
   greeting: null,
+  // 'chat' or 'cowork'. Chat is the default, so an install that has never seen
+  // the toggle behaves exactly as it did before the mode existed.
+  mode: 'chat',
 };
 
 const el = (id) => document.getElementById(id);
@@ -107,6 +110,7 @@ const dom = {
   modelName: el('model-name'),
   modelDot: el('model-dot'),
   composerModeLabel: el('composer-mode-label'),
+  modeToggle: el('mode-toggle'),
   wsPath: el('ws-path'),
   composerWs: el('composer-ws-label'),
   toasts: el('toasts'),
@@ -341,6 +345,59 @@ function greetingMarkup(greeting) {
   );
 }
 
+/**
+ * Longer-task starters for the Cowork empty state.
+ *
+ * Deliberately *not* inside `.suggestions`: the empty state hides that block on
+ * purpose (see the stylesheet), which is right for the four coding starters but
+ * would leave Cowork suggesting nothing at all on the one screen where it needs
+ * to explain itself. These are plain `.suggestion` buttons carrying the same
+ * `data-prompt` hook, so they submit through exactly the same path as every
+ * other starter here.
+ *
+ * The copy promises nothing the app cannot do: it describes several steps, a
+ * task list and real command output, all of which already exist. Nothing here
+ * mentions skills or plugins, because the backend that would read them is not
+ * built yet and a UI that advertises it would be lying.
+ */
+const COWORK_STARTERS = [
+  {
+    icon: 'i-list',
+    title: 'Plan it, then work through it',
+    detail: 'Search the project, then implement the plan step by step.',
+    prompt:
+      'Plan a small feature for this project. Search the code first, write the plan as a task list, then implement it step by step and run a command after each change to prove it still works.',
+  },
+  {
+    icon: 'i-search',
+    title: 'Fix one problem everywhere',
+    detail: 'One class of problem, fixed in every file it appears in.',
+    prompt:
+      'Go through this project and fix one class of problem everywhere it appears — for example unchecked file writes, or missing error handling. Keep a task list, change every file that needs it, and run the tests or a command that proves each change.',
+  },
+  {
+    icon: 'i-terminal',
+    title: 'Chase a failure to the end',
+    detail: 'Reproduce it, fix the cause, prove it with real output.',
+    prompt:
+      'Run the build or the tests in this project, reproduce whatever fails, find the cause, fix it, and show me the real command output that proves it passes now.',
+  },
+];
+
+function coworkStarters() {
+  if (state.mode !== 'cowork') return '';
+  return `
+    <div class="cowork-starters">
+      <div class="cowork-label">Cowork — for work that takes several steps</div>
+      ${COWORK_STARTERS.map(
+        (starter) => `<button class="suggestion" data-prompt="${escapeHtml(starter.prompt)}">
+          <div class="t">${icon(starter.icon)}${escapeHtml(starter.title)}</div>
+          <div class="d">${escapeHtml(starter.detail)}</div>
+        </button>`
+      ).join('')}
+    </div>`;
+}
+
 function renderWelcome() {
   const hasKey = state.config?.hasApiKey;
   const ws = state.config?.workspace || '';
@@ -374,6 +431,7 @@ function renderWelcome() {
               </div>
             </div>`
       }
+      ${coworkStarters()}
       <div class="suggestions">
         <button class="suggestion" data-prompt="Explore this project and tell me what it does. Then list three concrete improvements.">
           <div class="t">${icon('i-search')}Understand this project</div>
@@ -409,14 +467,28 @@ function renderWelcome() {
   });
 }
 
+/**
+ * The assistant role row.
+ *
+ * In Cowork the row also carries the mode, so a transcript read later says which
+ * mode the turn belongs to rather than leaving the reader to guess. It is the
+ * *current* mode, not a per-turn record: the mode is one app-wide setting and no
+ * per-turn value is stored. Nothing is added in chat mode, where the row is the
+ * model name and nothing else.
+ */
 function roleHeader(label, note = '') {
-  return `<div class="role">${icon('i-mark')}<span>${escapeHtml(label)}</span>${
+  const badge = state.mode === 'cowork' ? '<span class="role-mode">Cowork</span>' : '';
+  return `<div class="role">${icon('i-mark')}<span>${escapeHtml(label)}</span>${badge}${
     note ? `<span class="stream-note">${escapeHtml(note)}</span>` : ''
   }</div>`;
 }
 
 function renderTodos(todos) {
   if (!Array.isArray(todos) || !todos.length) return '';
+  // Cowork's defining behaviour is working through a list like this one, so in
+  // that mode the list is labelled and styled as the plan of record instead of
+  // the footnote it is during a one-off chat turn.
+  const cowork = state.mode === 'cowork';
   const items = todos
     .map((t) => {
       const status = t.status || 'pending';
@@ -425,7 +497,9 @@ function renderTodos(todos) {
       return `<li class="${cls}"><span class="mark">${mark}</span><span>${escapeHtml(t.content || '')}</span></li>`;
     })
     .join('');
-  return `<div class="todos"><div class="head">Task list</div><ul>${items}</ul></div>`;
+  return `<div class="todos${cowork ? ' cowork' : ''}"><div class="head">${
+    cowork ? 'Cowork task list' : 'Task list'
+  }</div><ul>${items}</ul></div>`;
 }
 
 function renderToolCard(call) {
@@ -647,6 +721,81 @@ function wireApprovalButtons() {
 }
 
 /* ------------------------------------------------------------------ *
+ * Chat / Cowork
+ * ------------------------------------------------------------------ */
+
+/**
+ * The one line under the composer. Chat keeps the hint it has always had; the
+ * Cowork line says what the mode does, so switching visibly changes something
+ * rather than only moving a highlight.
+ */
+const HINTS = {
+  chat: 'Enter to send · Shift+Enter for a new line · Klaud runs real commands in your working directory',
+  cowork: 'Cowork — longer tasks, it plans and works through them step by step.',
+};
+
+/**
+ * Which mode to start in.
+ *
+ * The saved setting wins whenever it exists. `mode` is not one of the keys the
+ * server's settings store keeps today — that file belongs to a sibling task — so
+ * a PATCH currently answers 200 and drops it, and the browser's own copy is what
+ * carries the choice across a reload until then. That copy is only ever a
+ * fallback; it never overrides a value the server did return.
+ */
+function initialMode() {
+  const stored = state.config?.mode;
+  if (stored === 'chat' || stored === 'cowork') return stored;
+  let local = '';
+  try {
+    local = localStorage.getItem('klaud.mode') || '';
+  } catch { /* private mode */ }
+  return local === 'cowork' ? 'cowork' : 'chat';
+}
+
+/** Repaint everything the mode decides: the toggle, the hint, transcript, welcome. */
+function applyMode(mode) {
+  state.mode = mode === 'cowork' ? 'cowork' : 'chat';
+  try {
+    localStorage.setItem('klaud.mode', state.mode);
+  } catch { /* private mode */ }
+  renderChrome();
+  // Both the assistant role row and the empty state are mode-specific, so the
+  // transcript is repainted rather than patched in one place.
+  renderTranscript();
+}
+
+async function setMode(next) {
+  const mode = next === 'cowork' ? 'cowork' : 'chat';
+  if (mode === state.mode) return;
+  // Switch first: the control must never lag behind the click. Persisting is the
+  // slower half and reports its own failure below.
+  applyMode(mode);
+  try {
+    state.config = await api('/api/settings', { method: 'PATCH', body: { mode } });
+    // If the store has learned the key, the server is the authority and a value
+    // that comes back different is adopted rather than quietly ignored.
+    if (state.config?.mode === 'chat' || state.config?.mode === 'cowork') {
+      if (state.config.mode !== state.mode) applyMode(state.config.mode);
+    }
+  } catch (err) {
+    // Never swallow this: the toggle is presented as a saved preference. Say
+    // what did and did not happen, since the browser copy above still applies.
+    toast(
+      `Mode switched to ${mode}, but the server did not save the setting: ${err.message}. This browser will remember the choice.`
+    );
+  }
+}
+
+/** Paint the segmented control from state, so it stays true after any re-render. */
+function paintModeToggle() {
+  if (!dom.modeToggle) return;
+  dom.modeToggle.querySelectorAll('[data-mode]').forEach((button) => {
+    button.setAttribute('aria-checked', String(button.dataset.mode === state.mode));
+  });
+}
+
+/* ------------------------------------------------------------------ *
  * Rendering — sidebar + chrome
  * ------------------------------------------------------------------ */
 
@@ -778,6 +927,7 @@ function renderChrome() {
   const mode = config.approvalMode || 'auto';
   const modeText = mode === 'readonly' ? 'read-only' : mode === 'ask' ? 'ask first' : 'auto-run';
   dom.composerModeLabel.textContent = modeText;
+  paintModeToggle();
   const ws = config.workspace || '';
   dom.wsPath.textContent = ws;
   dom.composerWs.textContent = shortPath(ws);
@@ -806,7 +956,7 @@ function renderChrome() {
       ? `${usage.total_tokens.toLocaleString()} tokens this turn · Klaud runs real commands in ${escapeHtml(
           shortPath(state.config?.workspace || '')
         )}`
-      : `Enter to send · Shift+Enter for a new line · Klaud runs real commands in your working directory`;
+      : HINTS[state.mode === 'cowork' ? 'cowork' : 'chat'];
 }
 
 /* ------------------------------------------------------------------ *
@@ -2500,6 +2650,12 @@ function wireEvents() {
   });
   el('composer-workspace').addEventListener('click', () => el('workspace-chip').click());
   el('composer-mode').addEventListener('click', cycleMode);
+  // Delegated: the segments themselves carry data-mode, and the control is
+  // static markup, so one listener survives every repaint of the transcript.
+  dom.modeToggle.addEventListener('click', (event) => {
+    const segment = event.target.closest('[data-mode]');
+    if (segment) setMode(segment.dataset.mode);
+  });
 
   document.addEventListener('keydown', (event) => {
     const mod = event.ctrlKey || event.metaKey;
@@ -2561,6 +2717,9 @@ async function boot() {
     return;
   }
 
+  // Resolved before the first paint: the empty state is mode-specific — Cowork
+  // suggests longer tasks where chat suggests the coding starters.
+  state.mode = initialMode();
   renderChrome();
   restoreSidebar();
   renderWelcome();

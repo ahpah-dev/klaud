@@ -124,6 +124,14 @@
         <div class="composer">
           <textarea id="prompt" rows="1" placeholder="Type for skills" autocomplete="off" spellcheck="true"></textarea>
           <div class="composer-row">
+            <!-- Chat and Cowork share this one composer, so the mode is a small
+                 segmented control sitting with the other chips rather than a
+                 second screen. A radiogroup, not a div: Tab reaches it and both
+                 Enter and Space activate a segment. -->
+            <div class="mode-toggle" id="mode-toggle" role="radiogroup" aria-label="Mode: chat or Cowork">
+              <button type="button" class="mode-seg" id="mode-chat" data-mode="chat" role="radio" aria-checked="true">Chat</button>
+              <button type="button" class="mode-seg" id="mode-cowork" data-mode="cowork" role="radio" aria-checked="false">Cowork</button>
+            </div>
             <button class="chip-select" id="composer-mode" title="Tool permissions">
               <svg aria-hidden="true"><use href="#i-shield"/></svg>
               <span id="composer-mode-label">auto</span>

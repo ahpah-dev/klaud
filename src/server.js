@@ -16,6 +16,27 @@ const { PUBLIC_DIR, LIMITS, defaultWorkspace } = require('./config');
 const store = require('./store');
 const { runAgentTurn } = require('./agent');
 const { listModels, LLMError, configureReasoningEffort } = require('./llm');
+const {
+  expandSlashCommand,
+  resetExtensions,
+  collectExtensions,
+  listInvocableSkills,
+  load: loadExtension,
+} = require('./extensions');
+
+/** Where each extension kind is read from, for the settings panel to display. */
+function skillsDirFor(cwd) {
+  const m = loadExtension('skills');
+  return m && typeof m.personalSkillsDir === 'function' ? m.personalSkillsDir(cwd) : '';
+}
+function pluginsDirFor(cwd) {
+  const m = loadExtension('plugins');
+  return m && typeof m.personalPluginsRoot === 'function' ? m.personalPluginsRoot(cwd) : '';
+}
+function agentsDirFor(cwd) {
+  const m = loadExtension('agents');
+  return m && typeof m.personalAgentsDir === 'function' ? m.personalAgentsDir(cwd) : '';
+}
 const { TOOLS, toolCatalog, detectShell, runShell, executeTool } = require('./lib/tools');
 const { resolveInside, statOrNull } = require('./lib/fsutil');
 const { getFreeCatalog, setupCloudflare } = require('./providers');
@@ -390,7 +411,35 @@ async function handleApi(req, res, url, pathname, { token, activeTurns }) {
       body.apiKey = '';
     }
     const next = await store.saveSettings(body);
+    // The skills module caches its directory scan under a key that does not
+    // include the plugin set, so turning a plugin on or off would otherwise keep
+    // serving the previous skill list for the rest of the session.
+    if (Object.prototype.hasOwnProperty.call(body, 'enabledPlugins')) resetExtensions();
     sendJson(res, 200, store.publicSettings(next));
+    return true;
+  }
+
+  if (pathname === '/api/extensions' && method === 'GET') {
+    const current = await store.loadSettings();
+    /* Reports what is actually loaded, not what could be. The UI shows this, so
+       it must never claim a plugin is contributing something it is not: any
+       component Klaud cannot run is surfaced as a warning by the plugins module
+       and passed through here unchanged. */
+    const found = collectExtensions({
+      cwd: current.workspace,
+      enabledPlugins: current.enabledPlugins || {},
+    });
+    sendJson(res, 200, {
+      skills: listInvocableSkills(current.workspace),
+      agents: found.agentNames,
+      dirs: {
+        skills: skillsDirFor(current.workspace),
+        plugins: pluginsDirFor(current.workspace),
+        agents: agentsDirFor(current.workspace),
+      },
+      warnings: found.warnings,
+      available: found.available,
+    });
     return true;
   }
 
@@ -685,6 +734,25 @@ async function handleApi(req, res, url, pathname, { token, activeTurns }) {
     // in llm.js.
     configureReasoningEffort(settings.reasoningEffort);
 
+    /* A message that starts with /skill-name is expanded here rather than left
+     * to the model, so a user who typed the command gets that skill applied even
+     * if the model would not have chosen it. The assistant-visible text is
+     * replaced by the skill's instructions; an unknown name becomes a notice
+     * instead of a silent no-op. */
+    let turnMessages = body.messages || [];
+    const lastUser = [...turnMessages].reverse().find((m) => m && m.role === 'user');
+    if (lastUser && typeof lastUser.content === 'string' && lastUser.content.startsWith('/')) {
+      const expanded = expandSlashCommand(lastUser.content, settings.workspace);
+      if (expanded && expanded.error) {
+        sse.send({ type: 'notice', level: 'warn', message: expanded.error });
+      } else if (expanded) {
+        sse.send({ type: 'notice', level: 'info', message: `Skill: ${expanded.name}` });
+        turnMessages = turnMessages.map((m) =>
+          m === lastUser ? { ...m, content: expanded.content } : m
+        );
+      }
+    }
+
     const turnId = body.turnId || store.newId();
     const controller = new AbortController();
     activeTurns.set(turnId, controller);
@@ -724,7 +792,7 @@ async function handleApi(req, res, url, pathname, { token, activeTurns }) {
     try {
       const result = await runAgentTurn({
         settings: { ...settings, ...(body.settings || {}) },
-        messages: body.messages || [],
+        messages: turnMessages,
         cwd: settings.workspace,
         approvalMode: body.approvalMode || settings.approvalMode,
         maxSteps: body.maxSteps || settings.maxSteps,

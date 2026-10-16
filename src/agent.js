@@ -9,6 +9,12 @@ const path = require('path');
 const { streamChat, LLMError, parseToolArguments } = require('./llm');
 const { toolSchemas, executeTool } = require('./lib/tools');
 const { LIMITS } = require('./config');
+const {
+  collectExtensions,
+  augmentSystemPrompt,
+  registerExtensionTools,
+  runSubagent,
+} = require('./extensions');
 
 const MESSAGE_ROLES = new Set(['system', 'user', 'assistant', 'tool']);
 
@@ -245,9 +251,38 @@ async function runAgentTurn(ctx) {
   const maxSteps = Math.max(1, Math.min(Number(ctx.maxSteps) || settings.maxSteps || 12, LIMITS.maxAgentSteps));
   const allowTools = ctx.allowTools !== false;
 
+  /* ---- extensions ----
+   * Skills, plugins and subagents contribute tools and prompt text. Collected
+   * once per turn so a skill added mid-session is picked up on the next message
+   * without a restart. Everything here is defensive: a broken plugin manifest
+   * must not stop the agent working.
+   */
+  const extensions = ctx.skipExtensions
+    ? { prompt: '', warnings: [], agentDirs: [], agentNames: [] }
+    : collectExtensions({ cwd, enabledPlugins: settings.enabledPlugins || {} });
+  registerExtensionTools();
+
+  // A subagent is a turn too, but it does not get the task tool, so delegation
+  // can never fan out recursively against the user's key.
+  const subagentsAllowed = ctx.allowSubagents !== false;
+
   let messages = repairToolSequences(sanitizeMessages(ctx.messages));
-  if (!messages.some((m) => m.role === 'system')) {
-    messages = [{ role: 'system', content: settings.systemPrompt }, ...messages];
+  // The prompt may arrive either from settings or as the first message of a
+  // stored transcript, so find the existing system message rather than assuming
+  // there is none. Either way the extension listings are appended to the copy
+  // that goes on the wire, leaving the stored history untouched.
+  const existingSystem = messages.find((m) => m.role === 'system');
+  const augmentedPrompt = augmentSystemPrompt(
+    (existingSystem && existingSystem.content) || settings.systemPrompt,
+    extensions
+  );
+  if (existingSystem) {
+    existingSystem.content = augmentedPrompt;
+  } else {
+    messages = [{ role: 'system', content: augmentedPrompt }, ...messages];
+  }
+  if (extensions.warnings.length) {
+    emit({ type: 'notice', level: 'warn', message: extensions.warnings.join(' ') });
   }
 
   const budget = ctx.maxContextChars ?? settings.maxContextChars;
@@ -314,7 +349,13 @@ async function runAgentTurn(ctx) {
         extraHeaders: settings.extraHeaders,
         model: settings.model,
         messages: requestMessages,
-        tools: toolsDisabled ? null : toolSchemas(),
+        // Not merely refusing the call: the tool is withheld from the schema, so
+        // a subagent has no `task` to reach for. Offering a tool only to reject
+        // it invites the model to try again a different way, which is the
+        // unbounded fan-out this guard exists to prevent.
+        tools: toolsDisabled
+          ? null
+          : toolSchemas().filter((t) => subagentsAllowed || t.function.name !== 'task'),
         temperature: settings.temperature,
         // Forwarded explicitly rather than read from module state inside the
         // client: one request, one set of options, nothing ambient to go stale.
@@ -534,6 +575,22 @@ async function runAgentTurn(ctx) {
         cwd,
         approvalMode,
         onTodos: (todos) => emit({ type: 'todos', todos }),
+        // The `task` tool does not run anything itself; it calls back into here
+        // so a subagent is just another turn with its own context. Absent when
+        // subagents are not allowed, which is how the tool refuses politely
+        // instead of failing the step.
+        runSubagent: subagentsAllowed
+          ? (request) =>
+              runSubagent({
+                ...request,
+                settings,
+                cwd,
+                approvalMode,
+                signal: ctx.signal,
+                agentDirs: extensions.agentDirs,
+                onEvent: emit,
+              })
+          : undefined,
       });
 
       // A failure with no guidance is what makes a model retry the same call, so
@@ -664,4 +721,5 @@ module.exports = {
   callSignature,
   suggestRecovery,
   stuckMessage,
+  runSubagent,
 };

@@ -1319,7 +1319,320 @@ class Browser {
     check('chat list rows are compact once chats exist',
       polish.listItemHeight === null || polish.listItemHeight <= 38, String(polish.listItemHeight));
 
-    console.log(`\n  screenshots: ${welcomeShot}, ${turnShot}, ${modalShot}, ${darkShot}, ${freeShot}, ${setupShot}, ${failShot}`);
+    /* ---------- Chat / Cowork: one composer, two modes ----------
+     * Deliberately last. This is the only block that changes the app-wide mode
+     * and reloads the page, so it must not run while the checks above depend on
+     * the state they set up. It opens by reloading onto the saved chat, which is
+     * the one place the *default* mode and the idle chat hint can both be read:
+     * the live hint is the token count at this point in the suite. */
+
+    const savedHash = await browser.evaluate(`return location.hash;`);
+    await browser.goto(`${appUrl}/${savedHash}`, 1800);
+
+    const modeDefaults = await browser.evaluate(`
+      const group = document.getElementById('mode-toggle');
+      const segs = group ? Array.from(group.querySelectorAll('[data-mode]')) : [];
+      const checked = segs.filter((b) => b.getAttribute('aria-checked') === 'true');
+      return {
+        exists: !!group,
+        inComposerRow: !!document.querySelector('.composer-row #mode-toggle'),
+        segments: segs.length,
+        role: group ? group.getAttribute('role') : null,
+        labels: segs.map((b) => b.textContent.trim()),
+        pressable: segs.every((b) => b.tagName === 'BUTTON'),
+        checked: checked.map((b) => b.dataset.mode),
+        mode: window.__klaud.state.mode,
+        hint: document.getElementById('composer-hint').textContent.trim(),
+        rows: document.querySelectorAll('.turn.assistant .role').length,
+        badges: document.querySelectorAll('.turn.assistant .role .role-mode').length,
+        coworkStarters: document.querySelectorAll('.cowork-starters .suggestion').length
+      };
+    `);
+    // The line every later check compares against, taken from the app itself so
+    // this never drifts from the copy in index.html.
+    const chatHint = modeDefaults.hint;
+
+    check('the composer carries a Chat / Cowork toggle beside the other chips',
+      modeDefaults.exists === true && modeDefaults.inComposerRow === true && modeDefaults.segments === 2,
+      JSON.stringify(modeDefaults));
+    check('the toggle is a radiogroup of real buttons, not a div',
+      modeDefaults.role === 'radiogroup' && modeDefaults.pressable === true && modeDefaults.checked.length === 1,
+      JSON.stringify({ role: modeDefaults.role, pressable: modeDefaults.pressable }));
+    check('the segments are labelled Chat and Cowork',
+      modeDefaults.labels.join('/') === 'Chat/Cowork', JSON.stringify(modeDefaults.labels));
+    check('the mode defaults to Chat',
+      modeDefaults.mode === 'chat' && modeDefaults.checked[0] === 'chat',
+      JSON.stringify({ mode: modeDefaults.mode, checked: modeDefaults.checked }));
+    check('chat mode offers no Cowork starters', modeDefaults.coworkStarters === 0,
+      `found ${modeDefaults.coworkStarters}`);
+    check('a chat transcript carries no mode badge', modeDefaults.badges === 0,
+      JSON.stringify({ rows: modeDefaults.rows, badges: modeDefaults.badges }));
+
+    /* ---- a real click on the segment, not a synthetic event ---- */
+    const coworkBox = await browser.evaluate(`
+      const r = document.getElementById('mode-cowork').getBoundingClientRect();
+      return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+    `);
+    await browser.click(coworkBox.x, coworkBox.y);
+    await sleep(600);
+
+    const cowork = await browser.evaluate(`
+      const segs = Array.from(document.querySelectorAll('#mode-toggle [data-mode]'));
+      const badge = document.querySelector('.turn.assistant .role .role-mode');
+      return {
+        mode: window.__klaud.state.mode,
+        checked: segs.filter((b) => b.getAttribute('aria-checked') === 'true').map((b) => b.dataset.mode),
+        rows: document.querySelectorAll('.turn.assistant .role').length,
+        badges: document.querySelectorAll('.turn.assistant .role .role-mode').length,
+        badgeLabel: badge ? badge.textContent.trim() : null,
+        model: badge ? badge.parentElement.querySelector('span').textContent.trim() : null,
+        configModel: window.__klaud.state.config.model,
+        local: (() => { try { return localStorage.getItem('klaud.mode'); } catch (e) { return null; } })()
+      };
+    `);
+    check('clicking Cowork switches the mode',
+      cowork.mode === 'cowork' && cowork.checked.join('') === 'cowork', JSON.stringify(cowork));
+    check('exactly one segment is ever selected',
+      cowork.checked.length === 1, JSON.stringify(cowork.checked));
+    check('a Cowork turn is labelled with the mode in the transcript',
+      cowork.rows >= 1 && cowork.badges === cowork.rows && /cowork/i.test(String(cowork.badgeLabel)),
+      JSON.stringify(cowork));
+    // The model the suite is pointed at changes earlier on (the free-provider
+    // checks apply OpenRouter), so this compares the row against the live config
+    // rather than against a hard-coded id.
+    check('the mode label sits beside the model name, not instead of it',
+      String(cowork.model).length > 0 && cowork.model === cowork.configModel, JSON.stringify(cowork));
+
+    /* ---- the row still holds together with one more control in it ---- */
+    // The composer row carries the mode switch, two chips, the model and send,
+    // and the working-directory path here is a long temp one: this is the most
+    // crowded the row ever gets, so it is the place to catch a label breaking
+    // over two lines ("auto-" / "run") now that a fourth control shares it.
+    const chipRow = await browser.evaluate(`
+      const chips = Array.from(document.querySelectorAll('.composer-row .chip-select'));
+      const row = document.querySelector('.composer-row');
+      return {
+        count: chips.length,
+        heights: chips.map((c) => Math.round(c.getBoundingClientRect().height)),
+        toggleHeight: Math.round(document.getElementById('mode-toggle').getBoundingClientRect().height),
+        overflows: row.scrollWidth > row.clientWidth + 1
+      };
+    `);
+    check('no composer chip breaks its label onto a second line',
+      chipRow.count >= 2 && chipRow.heights.every((h) => h <= 36), JSON.stringify(chipRow));
+    check('the composer row still fits inside the field',
+      chipRow.overflows === false, JSON.stringify(chipRow));
+
+    /* ---- the task list is more prominent in Cowork ----
+     * The mock provider never calls todo_write, so the list cannot come from a
+     * real turn here. Both variants are rendered into the page instead and
+     * measured, which is what the classes have to deliver. */
+    const todos = await browser.evaluate(`
+      const host = document.createElement('div');
+      const markup = (cls, head) =>
+        '<div class="' + cls + '"><div class="head">' + head + '</div><ul><li class="active"><span class="mark">x</span><span>step</span></li></ul></div>';
+      host.innerHTML = markup('todos cowork', 'Cowork task list') + markup('todos', 'Task list');
+      document.getElementById('messages').appendChild(host);
+      const cw = host.children[0];
+      const plain = host.children[1];
+      const cs = (node, prop) => getComputedStyle(node)[prop];
+      const probe = {
+        coworkHead: cw.querySelector('.head').textContent.trim(),
+        plainHead: plain.querySelector('.head').textContent.trim(),
+        coworkFont: parseFloat(cs(cw.querySelector('li'), 'fontSize')),
+        plainFont: parseFloat(cs(plain.querySelector('li'), 'fontSize')),
+        coworkPad: parseFloat(cs(cw, 'paddingLeft')),
+        plainPad: parseFloat(cs(plain, 'paddingLeft')),
+        coworkRail: parseFloat(cs(cw, 'borderLeftWidth')),
+        plainRail: parseFloat(cs(plain, 'borderLeftWidth'))
+      };
+      host.remove();
+      return probe;
+    `);
+    check('the Cowork task list names the mode, the chat one does not',
+      /cowork/i.test(todos.coworkHead) && todos.plainHead === 'Task list', JSON.stringify(todos));
+    check('the Cowork task list is visibly stronger than the chat one',
+      todos.coworkFont > todos.plainFont && todos.coworkPad > todos.plainPad &&
+        todos.coworkRail > todos.plainRail,
+      JSON.stringify(todos));
+
+    /* ---- the Cowork empty state ---- */
+    await browser.evaluate(`document.getElementById('new-chat').click(); return true;`);
+    await sleep(700);
+
+    const coworkEmpty = await browser.evaluate(`
+      const starters = Array.from(document.querySelectorAll('.cowork-starters .suggestion'));
+      const block = document.querySelector('.cowork-starters');
+      const label = document.querySelector('.cowork-label');
+      const heading = document.querySelector('.welcome h1');
+      return {
+        mode: window.__klaud.state.mode,
+        hint: document.getElementById('composer-hint').textContent.trim(),
+        starters: starters.length,
+        prompts: starters.map((b) => (b.dataset.prompt || '').length),
+        visible: block ? getComputedStyle(block).display !== 'none' && block.getBoundingClientRect().height > 0 : false,
+        label: label ? label.textContent.trim() : null,
+        chatStarters: document.querySelectorAll('.welcome .suggestions .suggestion').length,
+        greeting: heading ? heading.textContent.trim() : null,
+        mark: !!document.querySelector('.welcome .mark')
+      };
+    `);
+    check('switching to Cowork changes the composer hint',
+      coworkEmpty.hint !== chatHint && /cowork/i.test(coworkEmpty.hint),
+      JSON.stringify({ chat: chatHint, cowork: coworkEmpty.hint }));
+    check('the Cowork empty state offers longer-task suggestions',
+      coworkEmpty.starters >= 2 && coworkEmpty.prompts.every((n) => n > 60),
+      JSON.stringify(coworkEmpty));
+    check('the Cowork suggestions are visible, not hidden by the empty state',
+      coworkEmpty.visible === true, JSON.stringify(coworkEmpty));
+    check('the Cowork starters are labelled as such',
+      /cowork/i.test(String(coworkEmpty.label)), String(coworkEmpty.label));
+    check('the coding starters are still in the DOM, unchanged',
+      coworkEmpty.chatStarters === 4, `found ${coworkEmpty.chatStarters}`);
+    check('the greeting machinery still renders in Cowork',
+      /[a-z]/i.test(String(coworkEmpty.greeting)) && coworkEmpty.mark === true, JSON.stringify(coworkEmpty));
+
+    // Wired to the same submit path as every other starter: the listener really
+    // is attached, not merely the attribute. includeCommandLineAPI is what makes
+    // getEventListeners available outside the DevTools console.
+    const starterWired = await browser.send('Runtime.evaluate', {
+      expression: `(() => {
+        const node = document.querySelector('.cowork-starters .suggestion');
+        if (!node || typeof getEventListeners !== 'function') return -1;
+        return (getEventListeners(node).click || []).length;
+      })()`,
+      includeCommandLineAPI: true,
+      returnByValue: true,
+    });
+    const wired = starterWired.exceptionDetails ? -2 : starterWired.result.value;
+    check('the Cowork starters are wired to the shared data-prompt submit path',
+      wired > 0, `click listeners=${wired}`);
+
+    /* ---- the choice outlives the page ---- */
+    await browser.goto(`${appUrl}/`, 1800);
+    const reloaded = await browser.evaluate(`
+      const segs = Array.from(document.querySelectorAll('#mode-toggle [data-mode]'));
+      const heading = document.querySelector('.welcome h1');
+      return {
+        mode: window.__klaud.state.mode,
+        checked: segs.filter((b) => b.getAttribute('aria-checked') === 'true').map((b) => b.dataset.mode),
+        hint: document.getElementById('composer-hint').textContent.trim(),
+        starters: document.querySelectorAll('.cowork-starters .suggestion').length,
+        greeting: heading ? heading.textContent.trim() : null
+      };
+    `);
+    check('the mode survives a page reload',
+      reloaded.mode === 'cowork' && reloaded.checked.join('') === 'cowork',
+      JSON.stringify(reloaded));
+    check('the reloaded Cowork empty state is the Cowork one',
+      reloaded.starters >= 2 && /cowork/i.test(reloaded.hint), JSON.stringify(reloaded));
+    check('the greeting is still picked and rendered after a reload',
+      /[a-z]/i.test(String(reloaded.greeting)), String(reloaded.greeting));
+
+    /* ---- keyboard: Tab reaches it, Enter and Space activate ---- */
+    await browser.evaluate(`document.getElementById('prompt').focus(); return true;`);
+    await browser.key('Tab', 'Tab', 9);
+    await sleep(250);
+    const tabbed = await browser.evaluate(`
+      const active = document.activeElement;
+      const cs = getComputedStyle(active);
+      return {
+        active: active.id,
+        kb: document.documentElement.dataset.kb || null,
+        outline: cs.outlineStyle,
+        shadow: cs.boxShadow
+      };
+    `);
+    check('Tab reaches the toggle without touching the mouse',
+      tabbed.active === 'mode-chat', String(tabbed.active));
+    check('the toggle shows a real focus ring for keyboard users',
+      tabbed.kb === '1' && (tabbed.outline !== 'none' || tabbed.shadow !== 'none'),
+      JSON.stringify(tabbed));
+
+    // `browser.key` sends a raw key-down, which delivers keydown and keyup but
+    // not the character event a button's activation needs: measured in this
+    // harness, rawKeyDown+keyUp left the mode untouched while a full press fired
+    // the click. Space activates on either, so only Enter needs the full press.
+    const pressEnter = async () => {
+      const base = { key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 };
+      await browser.send('Input.dispatchKeyEvent', { type: 'keyDown', ...base, text: '\r', unmodifiedText: '\r' });
+      await browser.send('Input.dispatchKeyEvent', { type: 'char', ...base, text: '\r', unmodifiedText: '\r' });
+      await browser.send('Input.dispatchKeyEvent', { type: 'keyUp', ...base });
+    };
+    await pressEnter();
+    await sleep(600);
+    const afterEnter = await browser.evaluate(`
+      const segs = Array.from(document.querySelectorAll('#mode-toggle [data-mode]'));
+      return {
+        mode: window.__klaud.state.mode,
+        checked: segs.filter((b) => b.getAttribute('aria-checked') === 'true').map((b) => b.dataset.mode),
+        hint: document.getElementById('composer-hint').textContent.trim(),
+        starters: document.querySelectorAll('.cowork-starters .suggestion').length,
+        chatStarters: document.querySelectorAll('.welcome .suggestions .suggestion').length,
+        greeting: document.querySelector('.welcome h1') ? document.querySelector('.welcome h1').textContent.trim() : null
+      };
+    `);
+    check('Enter activates the focused segment',
+      afterEnter.mode === 'chat' && afterEnter.checked.join('') === 'chat', JSON.stringify(afterEnter));
+    check('switching back to Chat restores the original hint',
+      afterEnter.hint === chatHint, JSON.stringify({ expected: chatHint, got: afterEnter.hint }));
+    check('switching back to Chat restores the original starters',
+      afterEnter.chatStarters === 4 && afterEnter.starters === 0, JSON.stringify(afterEnter));
+
+    // Two Tabs from the prompt: the second segment, then Space.
+    await browser.evaluate(`document.getElementById('prompt').focus(); return true;`);
+    await browser.key('Tab', 'Tab', 9);
+    await browser.key('Tab', 'Tab', 9);
+    await sleep(250);
+    const secondTab = await browser.evaluate(`return document.activeElement.id;`);
+    await browser.key(' ', 'Space', 32);
+    await sleep(600);
+    const afterSpace = await browser.evaluate(`
+      const segs = Array.from(document.querySelectorAll('#mode-toggle [data-mode]'));
+      return {
+        mode: window.__klaud.state.mode,
+        checked: segs.filter((b) => b.getAttribute('aria-checked') === 'true').map((b) => b.dataset.mode),
+        hint: document.getElementById('composer-hint').textContent.trim(),
+        starters: document.querySelectorAll('.cowork-starters .suggestion').length
+      };
+    `);
+    check('Tab again reaches the Cowork segment', secondTab === 'mode-cowork', String(secondTab));
+    check('Space activates the focused segment too',
+      afterSpace.mode === 'cowork' && afterSpace.checked.join('') === 'cowork' &&
+        afterSpace.starters >= 2 && /cowork/i.test(afterSpace.hint),
+      JSON.stringify(afterSpace));
+
+    // Clean the keyboard ring off the composer before the screenshot, so the
+    // shot shows the mode rather than a focus state.
+    await browser.evaluate(`
+      document.getElementById('prompt').focus();
+      delete document.documentElement.dataset.kb;
+      return true;
+    `);
+    await sleep(200);
+    const coworkShot = await browser.screenshot(
+      path.join(PROJECT, 'docs', 'screenshots', 'screenshot-cowork-composer.png')
+    );
+
+    // Not an assertion, on purpose: the settings store does not own `mode` yet
+    // (a sibling task does), so this records what actually happened to the PATCH
+    // and where the reload above got the mode from.
+    const serverMode = await (async () => {
+      const res = await fetch(`${appUrl}/api/settings`, { headers: { 'x-klaud-token': token } });
+      return (await res.json()).mode;
+    })();
+    console.log(
+      `  mode on the server: ${
+        serverMode === undefined
+          ? 'not stored (the settings API accepts the PATCH and drops the unknown key); the reload was carried by the browser copy'
+          : JSON.stringify(serverMode)
+      }`
+    );
+    check('no exceptions from the mode toggle', browser.exceptions.length === 0, browser.exceptions.join('\n'));
+    check('no console errors from the mode toggle', browser.consoleMessages.length === 0,
+      JSON.stringify(browser.consoleMessages));
+
+    console.log(`\n  screenshots: ${welcomeShot}, ${turnShot}, ${modalShot}, ${darkShot}, ${freeShot}, ${setupShot}, ${failShot}, ${coworkShot}`);
   } finally {
     if (browser) await browser.close();
     server.kill();

@@ -715,9 +715,56 @@ const TOOLS = [
 
 const TOOLS_BY_NAME = new Map(TOOLS.map((t) => [t.name, t]));
 
+/* ------------------------------------------------------------------ *
+ * Tool registry
+ *
+ * The nine built-ins above are not the whole story any more: skills,
+ * subagents and plugins each contribute tools of their own. They are appended
+ * here rather than merged into `TOOLS` so the built-in list stays readable and
+ * a contributed tool can never shadow a built-in — a plugin shipped in a cloned
+ * repo does not get to redefine `run_command`.
+ * ------------------------------------------------------------------ */
+
+const CONTRIBUTED = [];
+const BUILTIN_NAMES = new Set(TOOLS.map((t) => t.name));
+
+/**
+ * Add tool definitions, typically from another module's `*ToolDefinitions()`.
+ *
+ * Matching entries are replaced so a hot reload does not stack duplicates, but
+ * a name that collides with a built-in is refused and reported rather than
+ * quietly winning.
+ */
+function registerTools(definitions) {
+  const rejected = [];
+  for (const def of Array.isArray(definitions) ? definitions : []) {
+    if (!def || typeof def.name !== 'string' || typeof def.run !== 'function') {
+      rejected.push(String(def && def.name ? def.name : '(unnamed)'));
+      continue;
+    }
+    if (BUILTIN_NAMES.has(def.name)) {
+      rejected.push(`${def.name} (shadows a built-in)`);
+      continue;
+    }
+    const at = CONTRIBUTED.findIndex((t) => t.name === def.name);
+    if (at === -1) CONTRIBUTED.push(def);
+    else CONTRIBUTED[at] = def;
+  }
+  return { registered: CONTRIBUTED.length, rejected };
+}
+
+/** Every tool currently available, built-ins first. */
+function allTools() {
+  return TOOLS.concat(CONTRIBUTED);
+}
+
+function findTool(name) {
+  return TOOLS_BY_NAME.get(name) || CONTRIBUTED.find((t) => t.name === name) || null;
+}
+
 /** OpenAI `tools` array (all of them — permission filtering happens at call time). */
 function toolSchemas() {
-  return TOOLS.map((t) => ({
+  return allTools().map((t) => ({
     type: 'function',
     function: {
       name: t.name,
@@ -729,7 +776,7 @@ function toolSchemas() {
 
 /** Metadata for the UI. */
 function toolCatalog() {
-  return TOOLS.map((t) => ({
+  return allTools().map((t) => ({
     name: t.name,
     description: t.description,
     permission: t.permission,
@@ -742,11 +789,12 @@ function toolCatalog() {
  */
 async function executeTool(name, args, ctx) {
   const started = Date.now();
-  const tool = TOOLS_BY_NAME.get(name);
+  const tool = findTool(name);
   if (!tool) {
+    const available = allTools().map((t) => t.name).join(', ');
     return {
       ok: false,
-      output: `Unknown tool "${name}". Available: ${[...TOOLS_BY_NAME.keys()].join(', ')}`,
+      output: `Unknown tool "${name}". Available: ${available}`,
       durationMs: 0,
     };
   }
@@ -794,4 +842,6 @@ module.exports = {
   lineDiff,
   truncate,
   DEFAULTS,
+  registerTools,
+  allTools,
 };
