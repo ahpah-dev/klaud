@@ -1,0 +1,30 @@
+# Dependencies — Klaud has none, but keep the door shut if you add any.
+node_modules/
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+
+# Local state. Klaud writes here, and it holds API keys in plain text.
+.klaud/
+.forge/
+settings.json
+session.json
+chats/
+
+# Environment files — never commit a key.
+.env
+.env.*
+*.local
+
+# Editor and OS noise.
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs and scratch files from the test harness.
+*.log
+npm-debug.log*
+.klaud-browser-*/
