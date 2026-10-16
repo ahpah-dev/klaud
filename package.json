@@ -4,13 +4,13 @@
   "description": "A local coding agent with a built-in list of free, no-card OpenAI-compatible providers. Bring your own key, or use none at all.",
   "license": "MIT",
   "author": "Klaud contributors",
-  "homepage": "https://github.com/OWNER/klaud#readme",
+  "homepage": "https://github.com/ahpah-dev/klaud#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/OWNER/klaud.git"
+    "url": "git+https://github.com/ahpah-dev/klaud.git"
   },
   "bugs": {
-    "url": "https://github.com/OWNER/klaud/issues"
+    "url": "https://github.com/ahpah-dev/klaud/issues"
   },
   "keywords": [
     "coding-agent",
