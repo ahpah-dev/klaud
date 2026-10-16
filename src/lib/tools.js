@@ -789,6 +789,35 @@ function toolCatalog() {
 }
 
 /**
+ * The permission a *call* actually runs at — a tool, or a tool name.
+ *
+ * Almost every tool has exactly one level, and for those this is just
+ * `tool.permission`. A tool that dispatches to sub-actions of different levels
+ * is why this exists. The service tools in `api-tool.js` are the case: a
+ * `use_<service>` tool is one schema for a whole API, so its declared level is
+ * the strongest action it can reach (the catalogue has to show that, because
+ * the tool *can* send). A call that only searches is still a `read` call
+ * though, and refusing it in read-only mode would be the wrong answer to give
+ * someone who asked for a search. Such a tool answers for the call in hand with
+ * `resolvePermission(args)`, and the fallback is its declared level, so a tool
+ * without one behaves exactly as before.
+ */
+function permissionForCall(toolOrName, args) {
+  const tool = typeof toolOrName === 'string' ? findTool(toolOrName) : toolOrName;
+  if (!tool) return null;
+  if (typeof tool.resolvePermission === 'function') {
+    try {
+      const level = tool.resolvePermission(args || {});
+      if (typeof level === 'string' && level) return level;
+    } catch {
+      /* Fall through to the declared level. A resolver that throws must not
+       * become a way past the gate. */
+    }
+  }
+  return tool.permission;
+}
+
+/**
  * Execute one tool call. Never throws: failures come back as `ok:false` so the
  * model can read the error and repair itself.
  */
@@ -805,17 +834,41 @@ async function executeTool(name, args, ctx) {
   }
 
   const mode = ctx.approvalMode || 'auto';
-  if (tool.permission === 'write' && mode === 'readonly') {
+  // Checked at the level of this call: a service tool can be `read` for a
+  // search and `send` for a message, and read-only mode has to tell those apart.
+  const permission = permissionForCall(tool, args);
+  if (permission === 'write' && mode === 'readonly') {
     return {
       ok: false,
       output: `Permission denied: writes are disabled (approval mode "readonly").`,
       durationMs: 0,
     };
   }
-  if (tool.permission === 'exec' && mode === 'readonly') {
+  if (permission === 'exec' && mode === 'readonly') {
     return {
       ok: false,
       output: `Permission denied: command execution is disabled (approval mode "readonly").`,
+      durationMs: 0,
+    };
+  }
+  // `send` is its own level because it is the one that leaves the machine: it
+  // goes out as the user, other people see it, and it cannot be taken back. It
+  // is refused here rather than only in the tool's own code, so a read-only
+  // session cannot perform an external action even if the tool forgets to ask —
+  // and the message says which of the two refusals this is, because "writes are
+  // disabled" would send someone looking for a file that was never the problem.
+  if (permission === 'send' && mode === 'readonly') {
+    // The action is named as well as the tool: a service tool is one schema for
+    // a whole API, so "use_gmail was refused" would not say whether the model
+    // tried to search or to send.
+    const action =
+      args && typeof args.action === 'string' && args.action.trim() ? ` (action ${args.action.trim()})` : '';
+    return {
+      ok: false,
+      output:
+        `Permission denied: external actions are disabled (approval mode "readonly"). ` +
+        `"${name}"${action} would go out as the user, other people would see it, and it could not be ` +
+        `taken back, so nothing was sent. Switch to "Ask first" to approve it case by case.`,
       durationMs: 0,
     };
   }
@@ -841,6 +894,7 @@ module.exports = {
   toolSchemas,
   toolCatalog,
   executeTool,
+  permissionForCall,
   detectShell,
   buildInvocation,
   runShell,

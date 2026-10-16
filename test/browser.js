@@ -999,6 +999,202 @@ class Browser {
       return true;
     `);
 
+    /* ---------- the Connections panel ----------
+       This instance has no OAuth client of its own, which is the state every
+       first-time user is in and the one the panel has to get right: the panel
+       renders, names what is missing, and offers no Connect button that could
+       not work. The failures that matter here are a throw or a console error —
+       the panel is built from a payload it does not control — so both are
+       asserted, not just the markup. */
+    await browser.evaluate(`
+      document.getElementById('open-settings-top').click();
+      return true;
+    `);
+    await sleep(900);
+    /* The panel reads `available[]` off the payload. It rendered empty for a
+     * while because the route module wrapped its own payload in a
+     * `{status, body}` envelope that the HTTP layer then wrapped again, so every
+     * field the client wanted was one level too deep. Asserted here as well as
+     * through the DOM, because a wrong shape is invisible until something
+     * silently renders nothing. */
+    const connPayload = await browser.evaluate(`
+      return fetch('/api/connections', { headers: { 'x-klaud-token': window.__klaud.settings.token } })
+        .then((r) => r.json())
+        .then((j) => ({
+          keys: Object.keys(j),
+          availableIsArray: Array.isArray(j.available),
+          count: Array.isArray(j.available) ? j.available.length : -1,
+          firstId: j.available && j.available[0] ? j.available[0].id : null,
+          hasSetupHint: Boolean(j.available && j.available[0] && j.available[0].setupHint),
+          hasActions: Boolean(j.available && j.available[0] && Array.isArray(j.available[0].actions)),
+          everyActionHasPermission: (j.available && j.available[0] ? j.available[0].actions : [])
+            .every((a) => ['read', 'write', 'send'].includes(a.permission)),
+          credentialsIsArray: Array.isArray(j.credentials),
+          // The field NAME legitimately appears as metadata, so this asserts that
+          // no credential field carries a value — not that the name is absent.
+          anyCredentialValue: (j.credentials || []).some((c) => {
+            for (const [k, v] of Object.entries(c)) {
+              if (/secret/i.test(k) && typeof v === 'string' && v) return true;
+            }
+            return false;
+          })
+        }))
+        .catch((e) => ({ error: String(e && e.message) }));
+    `);
+    check('the connections payload is not double-wrapped',
+      !connPayload.keys.includes('body') && connPayload.availableIsArray === true,
+      JSON.stringify(connPayload));
+    check('it carries the services the panel renders',
+      connPayload.count >= 1 && connPayload.firstId === 'gmail', JSON.stringify(connPayload));
+    check('each service carries its setup hint', connPayload.hasSetupHint === true,
+      JSON.stringify(connPayload));
+    check('each service carries its actions with a valid permission',
+      connPayload.hasActions === true && connPayload.everyActionHasPermission === true,
+      JSON.stringify(connPayload));
+    check('no credential field carries a secret value',
+      connPayload.anyCredentialValue === false, JSON.stringify(connPayload));
+    const connections = await browser.evaluate(`
+      const panel = document.querySelector('[data-conn-panel]');
+      if (!panel) return { present: false };
+      panel.scrollIntoView();
+      const text = panel.innerText;
+      const rows = Array.from(panel.querySelectorAll('[data-conn-row]'));
+      const sendLabels = Array.from(panel.querySelectorAll('.conn-perm')).map((n) => n.textContent.trim());
+      const setupBlocks = Array.from(panel.querySelectorAll('.conn-setup'));
+      const actions = Array.from(panel.querySelectorAll('.conn-actions li'));
+      return {
+        present: true,
+        inSettings: !!document.querySelector('.modal .field [data-conn-panel]'),
+        rows: rows.length,
+        ids: rows.map((r) => r.dataset.connRow),
+        connectButtons: panel.querySelectorAll('[data-conn-connect]').length,
+        disconnectButtons: panel.querySelectorAll('[data-conn-disconnect]').length,
+        setupBlocks: setupBlocks.length,
+        setupText: setupBlocks.map((b) => b.innerText).join('\\n'),
+        setupHead: setupBlocks.map((b) => b.querySelector('.conn-setup-head')?.innerText || '').join(' '),
+        setupWhere: setupBlocks.map((b) => b.querySelector('.conn-setup-where')?.innerText || '').join(' '),
+        setupNamesKey: /clientId/.test(text) && /clientSecret/.test(text),
+        sendLabels,
+        sendMarked: sendLabels.filter((s) => /send/i.test(s)).length,
+        actionCount: actions.length,
+        lead: panel.querySelector('.conn-lead')?.innerText || '',
+        leadPainted: (() => {
+          const lead = panel.querySelector('.conn-lead');
+          if (!lead) return false;
+          const cs = getComputedStyle(lead);
+          return cs.borderTopWidth !== '0px' && cs.backgroundColor !== 'rgba(0, 0, 0, 0)';
+        })(),
+        emptyOrFail: !!panel.querySelector('.conn-empty') || !!panel.querySelector('.conn-fail'),
+        statusText: panel.querySelector('[data-conn-status]')?.innerText || '',
+        refreshVisible: getComputedStyle(panel.querySelector('[data-conn-refresh]')).display !== 'none',
+        // A control that cannot work must not be offered at all.
+        deadConnectForUnconfigured: Array.from(panel.querySelectorAll('.conn-row'))
+          .filter((r) => r.querySelector('.conn-setup'))
+          .some((r) => r.querySelector('[data-conn-connect]'))
+      };
+    `);
+
+    check('the Connections panel renders inside Settings',
+      connections.present === true && connections.inSettings === true, JSON.stringify(connections));
+    check('the panel lists an available service', connections.rows >= 1 && connections.ids.includes('gmail'),
+      JSON.stringify(connections.ids));
+    check('the lead sentence says Klaud acts as the user, not as a separate account',
+      /as you/i.test(connections.lead) && /your address/i.test(connections.lead),
+      JSON.stringify(connections.lead));
+    check('the panel does not fail or come up blank',
+      connections.emptyOrFail === false, JSON.stringify(connections));
+    check('an unconfigured service shows its setup hint',
+      connections.setupBlocks >= 1 && connections.setupHead.length > 0, JSON.stringify(connections.setupHead));
+    check('the setup hint explains what to create, not just that something is missing',
+      /OAuth client/i.test(connections.setupText) && /console\.cloud\.google\.com|APIs & Services/.test(connections.setupText),
+      connections.setupText.slice(0, 200).replace(/\n/g, ' '));
+    check('the setup hint names the exact settings keys to fill in',
+      connections.setupNamesKey === true, String(connections.setupNamesKey));
+    // The keys are not editable in this modal, so the copy must not claim they
+    // are: it names the file, and says which of the two things it is.
+    check('the setup hint does not promise a field that does not exist',
+      !/add its client ID in Settings/i.test(connections.setupText + connections.setupWhere) &&
+        /settings\.json/.test(connections.setupWhere) &&
+        /clientId/.test(connections.setupWhere) && /clientSecret/.test(connections.setupWhere),
+      connections.setupWhere.slice(0, 300).replace(/\n/g, ' '));
+    check('no Connect button is offered for a service that cannot connect',
+      connections.connectButtons === 0 && connections.deadConnectForUnconfigured === false,
+      JSON.stringify({ buttons: connections.connectButtons, dead: connections.deadConnectForUnconfigured }));
+    check('the actions a connection would grant are listed',
+      connections.actionCount >= 5, String(connections.actionCount));
+    check('an action that sends is marked as such',
+      connections.sendMarked === 1 && connections.sendLabels.length >= 1,
+      JSON.stringify(connections.sendLabels));
+    check('the panel has its own visual treatment, not a default one',
+      connections.leadPainted === true, String(connections.leadPainted));
+
+    // Focus ring: the panel's controls are inside the modal, and the existing
+    // `data-kb` mechanism has to cover them — a mouse click must paint none.
+    await browser.evaluate(`
+      const panel = document.querySelector('[data-conn-panel]');
+      panel.scrollIntoView();
+      document.querySelector('[data-close]').focus();
+      delete document.documentElement.dataset.kb;
+      return true;
+    `);
+    await sleep(150);
+    const ringByMouse = await browser.evaluate(`
+      const button = document.querySelector('[data-conn-refresh]');
+      const rect = button.getBoundingClientRect();
+      const kbBefore = document.documentElement.dataset.kb || null;
+      const cs = getComputedStyle(button);
+      return { kbBefore, outline: cs.outlineStyle, shadow: cs.boxShadow, x: rect.x + 4, y: rect.y + 4, w: rect.width };
+    `);
+    await browser.click(ringByMouse.x, ringByMouse.y);
+    await sleep(250);
+    const ringAfterClick = await browser.evaluate(`
+      const button = document.querySelector('[data-conn-refresh]');
+      const cs = getComputedStyle(button);
+      return {
+        kb: document.documentElement.dataset.kb || null,
+        outline: cs.outlineStyle,
+        shadow: cs.boxShadow,
+        focused: document.activeElement === button
+      };
+    `);
+    check('a mouse click on a panel control paints no focus ring',
+      ringAfterClick.kb === null && ringAfterClick.outline === 'none' &&
+        (ringAfterClick.shadow === 'none' || ringAfterClick.shadow === ''),
+      JSON.stringify(ringAfterClick));
+    check('the click really reached the panel control', ringAfterClick.focused === true,
+      JSON.stringify(ringAfterClick));
+
+    const connectionsShot = await browser.screenshot(
+      path.join(PROJECT, 'docs', 'screenshots', 'screenshot-connections.png')
+    );
+
+    check('no exceptions after opening the Connections panel',
+      browser.exceptions.length === 0, browser.exceptions.join('\n'));
+    check('no console errors after opening the Connections panel',
+      browser.consoleMessages.length === 0, JSON.stringify(browser.consoleMessages));
+
+    // A polling panel that keeps polling after the modal closes is the leak this
+    // cleanup exists to prevent, and it would also 401 every request once the
+    // window navigates.
+    await browser.evaluate(`
+      document.querySelector('.overlay [data-close]').click();
+      return true;
+    `);
+    await sleep(1600);
+    const afterClose = await browser.evaluate(`
+      return {
+        closed: !document.querySelector('.overlay'),
+        panel: !!document.querySelector('[data-conn-panel]'),
+        cleanupCleared: document.getElementById('modal-root').__cleanup == null
+      };
+    `);
+    check('closing Settings removes the panel', afterClose.closed === true && afterClose.panel === false,
+      JSON.stringify(afterClose));
+    check('closing Settings stops the panel cleanup hook',
+      afterClose.cleanupCleared === true, JSON.stringify(afterClose));
+    check('no console errors after closing the Connections panel',
+      browser.consoleMessages.length === 0, JSON.stringify(browser.consoleMessages));
+
     /* ---------- dark mode ---------- */
     await browser.evaluate(`
       document.getElementById('toggle-theme').click();
@@ -1704,7 +1900,7 @@ class Browser {
     check('no change is stated rather than shown as 0/0', diffCases.countsNone === 'no change',
       String(diffCases.countsNone));
 
-    console.log(`\n  screenshots: ${welcomeShot}, ${turnShot}, ${modalShot}, ${darkShot}, ${freeShot}, ${setupShot}, ${failShot}, ${coworkShot}`);
+    console.log(`\n  screenshots: ${welcomeShot}, ${turnShot}, ${modalShot}, ${connectionsShot}, ${darkShot}, ${freeShot}, ${setupShot}, ${failShot}, ${coworkShot}`);
   } finally {
     if (browser) await browser.close();
     server.kill();

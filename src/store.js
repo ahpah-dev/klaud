@@ -84,6 +84,41 @@ function normalizeMode(value) {
  */
 const REASONING_EFFORTS = ['', 'low', 'medium', 'high'];
 
+/**
+ * Whether a settings key holds a connector credential, e.g. `gmail.clientId`.
+ *
+ * Connector credentials cannot be a fixed allow-list, because connectors are
+ * modules that can be added without touching this file. So they are matched by
+ * shape instead: `<slug>.<clientId|clientSecret>`, which is exactly what
+ * `connectors.credentialKeys()` produces.
+ *
+ * This was a real dead end rather than a nicety: with no allow-listed key, the
+ * settings API accepted the write, silently dropped it, and the connections
+ * panel reported "no OAuth client configured" forever with no way to fix it from
+ * inside the app. It had to be hand-edited into settings.json to work.
+ *
+ * The shape is deliberately narrow. An arbitrary dotted key would be a way to
+ * write anything into the settings file through the API, and the value has to be
+ * a string for the same reason.
+ */
+const CREDENTIAL_KEY_RE = /^[a-z][a-z0-9_-]{1,40}\.(clientId|clientSecret)$/;
+
+function isCredentialKey(key) {
+  return typeof key === 'string' && CREDENTIAL_KEY_RE.test(key);
+}
+
+function credentialPatch(patch) {
+  const out = {};
+  if (!patch || typeof patch !== 'object') return out;
+  for (const [key, value] of Object.entries(patch)) {
+    if (!isCredentialKey(key)) continue;
+    // An empty string means "clear it", which is how a user removes a client id
+    // they no longer want. Anything non-string is refused rather than coerced.
+    if (typeof value === 'string') out[key] = value.trim();
+  }
+  return out;
+}
+
 async function loadSettings() {
   const { settings } = dirs();
   const stored = (await readJson(settings, {})) || {};
@@ -114,6 +149,7 @@ async function saveSettings(patch) {
       next[key] = patch[key];
     }
   }
+  Object.assign(next, credentialPatch(patch));
   next.baseUrl = normalizeBaseUrl(next.baseUrl);
   next.temperature = clamp(Number(next.temperature), 0, 2, DEFAULTS.temperature);
   next.maxSteps = clamp(Number(next.maxSteps), 1, 40, 12);
@@ -149,11 +185,28 @@ function normalizeReasoningEffort(value) {
   return REASONING_EFFORTS.includes(effort) ? effort : '';
 }
 
-/** Never ship the raw key to the browser. */
+/**
+ * Never ship a credential to the browser.
+ *
+ * A connector's client secret is every bit as sensitive as the provider API key,
+ * and it would have travelled: this function removes `apiKey` by name and spread
+ * the rest, so adding connector credentials to the settings file put
+ * `gmail.clientSecret` straight into every `/api/settings` response. Client IDs
+ * are public by design and are kept so the UI can show which one is in use; the
+ * secret is replaced with a boolean.
+ */
 function publicSettings(settings) {
   const { apiKey, ...rest } = settings;
+  const out = {};
+  for (const [key, value] of Object.entries(rest)) {
+    if (isCredentialKey(key) && key.endsWith('.clientSecret')) {
+      out[key.replace(/\.clientSecret$/, '.hasClientSecret')] = Boolean(String(value || '').trim());
+      continue;
+    }
+    out[key] = value;
+  }
   return {
-    ...rest,
+    ...out,
     hasApiKey: Boolean(apiKey),
     apiKeyHint: apiKey ? maskKey(apiKey) : '',
   };

@@ -41,6 +41,7 @@ function agentsDirFor(cwd) {
 const { TOOLS, toolCatalog, detectShell, runShell, executeTool } = require('./lib/tools');
 const { resolveInside, statOrNull } = require('./lib/fsutil');
 const { getFreeCatalog, setupCloudflare } = require('./providers');
+const connectionRoutes = require('./lib/routes-connections');
 
 /** turnId -> { resolve(callId, approved) } — bridges the two HTTP requests. */
 const approvalBridge = new Map();
@@ -448,6 +449,30 @@ async function handleApi(req, res, url, pathname, { token, activeTurns }) {
       available: found.available,
     });
     return true;
+  }
+
+  /* ---------------------------- connections --------------------------- */
+  /* OAuth connectors: services Klaud can act on as the user. The routes live in
+   * their own module because this file is already the router, the SSE host and
+   * the boot sequence; `null` means "not mine", so the chain below continues.
+   *
+   * Two things this seam has to get right, and got wrong first time:
+   *
+   * 1. The reply is sent here. This router's return value is only a sentinel —
+   *    the caller tests `handled !== false` and never looks inside it — so
+   *    returning the envelope meant nothing wrote a response and the request hung
+   *    until the client timed out, which is what left the panel on "Reading
+   *    connections…" forever.
+   * 2. Only the body is sent. Every other handler here calls
+   *    `sendJson(res, status, payload)`, so the client expects the payload
+   *    itself. Sending the envelope gave it `{status, body}` with no `available`
+   *    key, and the panel rendered an empty list from a perfectly good response. */
+  {
+    const handled = await connectionRoutes.handle(method, pathname);
+    if (handled) {
+      sendJson(res, handled.status, handled.body);
+      return true;
+    }
   }
 
   /* ------------------------------- models ----------------------------- */

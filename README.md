@@ -1,6 +1,6 @@
 # Klaud
 
-**v1.0.3** — a local coding agent with a built-in list of **genuinely free, no-card
+**v1.1.0** — a local coding agent with a built-in list of **genuinely free, no-card
 OpenAI-compatible providers**. It reads and writes real files on your machine,
 runs real commands, and verifies its own work — behind a warm, paper-like
 interface.
@@ -123,7 +123,74 @@ relays a blank as though it were a result.
 Everything is read from disk on each turn, so a skill added while Klaud is
 running is picked up on your next message — no restart.
 
-## The greeting changes with the clock
+## Connections: Gmail, and acting as you
+
+A connection lets Klaud use a real service **as you** — mail sent through Gmail
+comes from your address, because it is your account it is using. Gmail is the
+first connector.
+
+### There is one thing you have to do yourself
+
+**You must register your own OAuth client with Google.** Klaud cannot ship one: a
+client secret published in a repository is not a secret, and Google requires each
+user's own consent screen. That is not a limitation to work around, it is the
+only correct arrangement.
+
+1. Create a project at <https://console.cloud.google.com/>.
+2. **APIs & Services → Library**, enable the **Gmail API**.
+3. **APIs & Services → Credentials → Create credentials → OAuth client ID**.
+4. Choose **Desktop app**. Desktop clients accept any loopback port; a *Web
+   application* client rejects the redirect and you will get
+   `redirect_uri_mismatch`.
+5. Copy the **client ID** and **client secret** into Settings → Connections.
+
+Google will show an "unverified app" warning. That is expected for a personal
+client and is not a Klaud problem — you are the developer and the only user.
+
+### What Klaud asks Google for
+
+Three scopes, and no more:
+
+| Scope | Why |
+| --- | --- |
+| `gmail.readonly` | Search, read and list labels |
+| `gmail.send` | Send a message — the narrowest scope that can |
+| `gmail.modify` | Change labels. Gmail has no label-only write scope, so this is the minimum for that one action |
+
+Not requested: `mail.google.com/` (full access) and `gmail.compose`. Google's
+consent screen describes `gmail.modify` as the ability to "read, compose, send,
+and permanently delete all your email" — accurate and alarming in equal measure,
+and worth reading before you approve.
+
+### Being honest about the tokens
+
+They are stored as **plain JSON** in `~/.klaud/connections/` — not encrypted, and
+not in your OS keychain. There is no keychain integration because every route to
+one needs a native dependency, and Klaud has none. On POSIX the files are created
+`0600`; on Windows the filesystem does not enforce that. **A refresh token is
+durable access to your account until you revoke it** — at
+<https://myaccount.google.com/permissions>.
+
+Disconnect removes the stored credential. Revoking at Google is the
+belt-and-braces version.
+
+### What it can do
+
+| Action | Permission |
+| --- | --- |
+| `gmail_search` — search the mailbox | read |
+| `gmail_read` — read one message | read |
+| `gmail_labels` — list labels | read |
+| `gmail_modify` — add or remove labels | write |
+| `gmail_send` — send a message | **send** |
+
+`send` is a distinct permission level, not a flavour of `write`. It means *this
+leaves the machine, other people see it, and it cannot be taken back*. In **Ask
+first** mode it is confirmed before it goes out; **Read-only** refuses it
+outright. A successful send means Gmail accepted the message for sending — which,
+per Google's own documentation, is not proof it was delivered. Check Sent.
+
+### The greeting changes with the clock
 
 An empty chat says something different depending on the hour, so the app does not
 open with the same four words every single time. "Here we go!" is the anchor and
@@ -527,19 +594,23 @@ Everything under `/api/*` needs the `x-klaud-token` header.
 npm test
 ```
 
-1080 checks in total, no test framework, no dependencies. Every suite is
+1750 checks in total, no test framework, no dependencies. Every suite is
 self-contained: they spawn their own servers on throwaway data directories, so
 running the tests can never disturb your real configuration.
 
 | Suite | Checks | What it proves |
 | --- | --- | --- |
-| `test/run.js` | 120 | Tool sandbox, shell exit codes, LLM client, agent loop, **loop detection**, reasoning-effort wire format, retry timing, **time-of-day greeting**, history pruning |
-| `test/markdown.mjs` | 29 | Markdown rendering and HTML escaping |
+| `test/run.js` | 126 | Tool sandbox, shell exit codes, LLM client, agent loop, **loop detection**, reasoning-effort wire format, retry timing, **time-of-day greeting**, **connector credentials in the settings store**, history pruning |
+| `test/markdown.mjs` | 107 | Markdown rendering and HTML escaping, including table cells, nested lists, ordered-list starts, `<hr>`, and a 10-shape XSS battery through every hard path |
 | `test/ui-static.js` | 38 | Element ids, icon sprite, CSS coverage, module wiring, working-indicator animations |
 | `test/skills.js` | 70 | Frontmatter parsing, discovery, shadowing, the slash-command parser, and that a skill body is wrapped as untrusted |
 | `test/plugins.js` | 124 | Manifests, optional manifests, path containment against `../` and symlink escapes, dependencies, and that hooks and MCP are reported as unimplemented |
 | `test/agents.js` | 143 | Subagent definitions, all three `tools` shapes, shadowing, and the `task` shim's behaviour with and without a runner |
-| `test/extensions.js` | 67 | The joins: a skill reaching a real request, **a subagent not being offered the `task` tool**, honest reporting of an answerless subagent, and that a malformed plugin degrades to a warning |
+| `test/extensions.js` | 72 | The joins: a skill reaching a real request, **a subagent not being offered the `task` tool**, **a subagent's own writes being approved rather than slipping through**, honest reporting of an answerless subagent, and a malformed plugin degrading to a warning |
+| `test/connectors.js` | 44 | The registry: an unsafe id refused, a file that throws on load contained, duplicate ids, sibling `actions`/`scopes` exports, and that every shipped connector resolves an API root |
+| `test/oauth.js` | 150 | PKCE against the RFC 7636 vector, a real loopback exchange against a mock token endpoint, `state` mismatch refusing to exchange, timeout closing its socket, absolute `expires_at`, refresh only when expired, and that a 5xx is retryable while `invalid_grant` needs a reconnect |
+| `test/connectors-gmail.js` | 251 | The Gmail API contract against mocks: base64url bodies, multipart walking, the RFC 2047 subject round trip, every documented error reason mapped, and that no full-access scope is requested |
+| `test/api-tool.js` | 112 | The `send` permission level: refused under read-only with its own wording, `write`/`exec` refusals unchanged, a missing connector registry degrading to an empty tool list, and that no token ever appears in the prompt text |
 | `test/cloudflare-token.mjs` | 16 | Account IDs are read from every token claim shape, and never guessed |
 | `test/cloudflare-setup.js` | 42 | The setup path against a stand-in Cloudflare API, including empty account lists |
 | `test/cloudflare-errors.js` | 51 | Every Cloudflare failure explains itself; a bare "unknown" is impossible |
@@ -547,7 +618,7 @@ running the tests can never disturb your real configuration.
 | `test/e2e-http.js` | 41 | The full HTTP and SSE API, malformed-request resilience, and that the tool catalogue reports every tool before a turn has run |
 | `test/auth-recovery.js` | 21 | A stale session token can be recovered with one click |
 | `test/folder-picker.js` | 30 | Typing a path, creating a folder, switching workspace |
-| `test/browser.js` | 209 | The app driven in headless Chrome, start to finish: no accent ring on a mouse click, the Chat/Cowork toggle and its persisted mode, the Cowork empty state, and **the diff reader** — a wrong diff is worse than none, so it is asserted rather than only photographed |
+| `test/browser.js` | 233 | The app driven in headless Chrome, start to finish: no accent ring on a mouse click, the Chat/Cowork toggle and its persisted mode, the diff reader, and **the connections payload not being double-wrapped** while no credential value reaches the browser |
 
 `test/browser.js` is the important one. It launches Chrome, loads the real page,
 and fails on any uncaught exception or console error. It then types a message,

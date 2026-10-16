@@ -756,6 +756,55 @@ async function main() {
         await saveSettings({ reasoningEffort: '' });
         assert.equal((await loadSettings()).reasoningEffort, '');
       });
+
+      /* ---- connector credentials ---- */
+      // These live in the same file as everything else, but they were NOT in
+      // SETTING_KEYS, so the settings API accepted the write, silently dropped
+      // it, and the Connections panel reported "no OAuth client configured"
+      // forever with no way to fix it from inside the app.
+
+      await it('stores a connector client id', async () => {
+        const saved = await saveSettings({ 'gmail.clientId': '1234.apps.googleusercontent.com' });
+        assert.equal(saved['gmail.clientId'], '1234.apps.googleusercontent.com');
+        assert.equal((await loadSettings())['gmail.clientId'], '1234.apps.googleusercontent.com');
+      });
+
+      await it('trims a pasted credential', async () => {
+        const saved = await saveSettings({ 'gmail.clientId': '  spaced-id  ' });
+        assert.equal(saved['gmail.clientId'], 'spaced-id');
+      });
+
+      await it('clears a credential with an empty string', async () => {
+        await saveSettings({ 'gmail.clientId': '' });
+        assert.equal((await loadSettings())['gmail.clientId'], '');
+      });
+
+      await it('refuses a dotted key that is not a credential', async () => {
+        // Otherwise an arbitrary dotted key would be a way to write anything at
+        // all into the settings file through the API.
+        const saved = await saveSettings({ 'evil.thing': 'x', 'gmail.other': 'y', 'gmail.clientSecretX': 'z' });
+        assert.equal(saved['evil.thing'], undefined);
+        assert.equal(saved['gmail.other'], undefined);
+        assert.equal(saved['gmail.clientSecretX'], undefined);
+      });
+
+      await it('refuses a non-string credential rather than coercing it', async () => {
+        const saved = await saveSettings({ 'gmail.clientId': 42 });
+        assert.notEqual(saved['gmail.clientId'], '42');
+      });
+
+      await it('never ships a client secret to the browser', async () => {
+        await saveSettings({ 'gmail.clientId': 'pub-id', 'gmail.clientSecret': 'GOCSPX-supersecret' });
+        const { publicSettings } = require('../src/store');
+        const pub = publicSettings(await loadSettings());
+        const blob = JSON.stringify(pub);
+        // The client id is public by design and the UI shows it; the secret is
+        // as sensitive as the provider API key and must not travel at all.
+        assert.ok(!blob.includes('GOCSPX-supersecret'), 'the secret reached publicSettings');
+        assert.equal(pub['gmail.clientId'], 'pub-id');
+        assert.equal(pub['gmail.hasClientSecret'], true);
+        assert.equal(pub['gmail.clientSecret'], undefined);
+      });
     } finally {
       if (previousDataDir === undefined) delete process.env.KLAUD_DATA_DIR;
       else process.env.KLAUD_DATA_DIR = previousDataDir;

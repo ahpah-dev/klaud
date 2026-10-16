@@ -221,6 +221,12 @@ function registerExtensionTools() {
  * 2. **Tools are narrowed, not widened.** An agent definition may declare an
  *    allow-list; it can never gain a tool the session does not already have, and
  *    the permission mode still applies to everything it calls.
+ *
+ * The approval prompt is forwarded, and that is not a detail. It used to be
+ * dropped here, so in "Ask first" mode the user approved the delegation and the
+ * nested turn then wrote files and ran commands without ever asking again — the
+ * setting described a boundary that did not exist. See `nestedApproval` below
+ * for how the ids stay unique.
  */
 async function runSubagent({
   description,
@@ -231,6 +237,7 @@ async function runSubagent({
   approvalMode,
   signal,
   onEvent,
+  requestApproval,
   agentDirs = [],
 }) {
   const agents = load('agents');
@@ -279,6 +286,10 @@ async function runSubagent({
    * returned "runAgentTurn is not defined". */
   const { runAgentTurn } = require('./agent');
 
+  // Unique per delegation, so a nested approval id can never collide with the
+  // parent turn's in the server's single pending-approvals map.
+  const delegationId = `sub${Math.random().toString(36).slice(2, 8)}`;
+
   const inner = [];
   const result = await runAgentTurn({
     settings: subSettings,
@@ -289,11 +300,28 @@ async function runSubagent({
     signal,
     allowSubagents: false,
     allowTools: true,
+    /* Approval ids are namespaced per delegation.
+     *
+     * The server holds pending approvals in one map keyed by id, and both turns
+     * number their tool calls from `call_1`. Without a prefix, a nested write
+     * asking to be approved as "call_1" would collide with the parent's own
+     * "call_1" — the user would be shown one prompt and two different decisions
+     * would resolve against it. The description is included because the dialog
+     * may show it, and "which subagent is asking" is otherwise unanswerable. */
+    requestApproval:
+      typeof requestApproval === 'function'
+        ? (request) =>
+            requestApproval({
+              ...request,
+              id: `${delegationId}:${request.id}`,
+              subagent: description || agent || 'subagent',
+            })
+        : undefined,
     // Forward only the events a parent transcript should show, and tag them so
     // the UI can nest them under the delegation rather than interleaving them.
     onEvent: (event) => {
       inner.push(event);
-      if (onEvent && ['tool_call', 'tool_result', 'notice'].includes(event.type)) {
+      if (onEvent && ['tool_call', 'tool_result', 'notice', 'approval_request'].includes(event.type)) {
         onEvent({ ...event, subagent: description || agent || 'subagent' });
       }
     },

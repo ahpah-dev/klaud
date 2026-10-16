@@ -7,7 +7,8 @@
 
 const path = require('path');
 const { streamChat, LLMError, parseToolArguments } = require('./llm');
-const { toolSchemas, executeTool } = require('./lib/tools');
+const { toolSchemas, executeTool, permissionForCall, registerTools } = require('./lib/tools');
+const { listServiceTools, authToolDefinitions, describeConnectionsForPrompt } = require('./lib/api-tool');
 const { LIMITS } = require('./config');
 const {
   collectExtensions,
@@ -196,6 +197,31 @@ const WRAP_UP_MESSAGE = [
 ].join('\n');
 
 /**
+ * One sentence saying what the user is being asked to allow.
+ *
+ * "Klaud wants to run use_gmail" is not a decision anyone can make; "Klaud wants
+ * to send this as you" is. The level comes from the same place the gate used, so
+ * the words cannot drift away from what is actually being permitted — and a
+ * dialog that describes the wrong effect is worse than no dialog, because it
+ * teaches people to approve without reading.
+ */
+function approvalReason(permission, name, args) {
+  if (permission === 'send') {
+    const service = name.startsWith('use_') ? name.slice(4) : name;
+    const action = args && typeof args.action === 'string' ? args.action.trim() : '';
+    return (
+      `Klaud wants to send this as you: ${service}${action ? ` · ${action}` : ''}. ` +
+      'It leaves this machine, other people will see it, and it cannot be taken back — ' +
+      'check the recipient and the content before allowing it.'
+    );
+  }
+  if (permission === 'exec') {
+    return 'Klaud wants to run a command on this machine. Check what it does before allowing it.';
+  }
+  return 'Klaud wants to write to a file in the working directory. Check the path and the content before allowing it.';
+}
+
+/**
  * Keep the most recent part of a long conversation so one session cannot grow
  * without bound. Cutting happens at whole user turns only, so an assistant
  * message never loses the tool results that answer it.
@@ -262,6 +288,13 @@ async function runAgentTurn(ctx) {
     : collectExtensions({ cwd, enabledPlugins: settings.enabledPlugins || {} });
   registerExtensionTools();
 
+  /* The service tools — one per connector — and the three tools that manage the
+   * credentials behind them are registered the same way and just as often, so a
+   * connector or a fresh authorization that appears while Klaud is running is
+   * picked up on the next message. `registerTools` replaces by name, so this is
+   * idempotent and costs nothing on a turn that does not use them. */
+  registerTools([...authToolDefinitions(), ...listServiceTools()]);
+
   // A subagent is a turn too, but it does not get the task tool, so delegation
   // can never fan out recursively against the user's key.
   const subagentsAllowed = ctx.allowSubagents !== false;
@@ -276,10 +309,24 @@ async function runAgentTurn(ctx) {
     (existingSystem && existingSystem.content) || settings.systemPrompt,
     extensions
   );
+  /* The connected-service listing is joined here rather than inside
+   * extensions.js. That module is the one place that knows about skills,
+   * plugins and subagents, and a connection is none of those three: it is a
+   * credential, not an extension. This is the single place that assembles the
+   * prompt for a request, so the join is two lines here and no new dependency in
+   * a file that three other features already share.
+   *
+   * `describeConnectionsForPrompt()` resolves to '' unless a service really is
+   * connected, so the prompt stays byte-identical for every session that does
+   * not use this — nobody pays for the feature in tokens or behaviour. It is
+   * asynchronous because the authorization store reads the connection files,
+   * which is why the join is awaited here rather than being a plain string. */
+  const connectionsBlock = await describeConnectionsForPrompt();
+  const systemPrompt = connectionsBlock ? `${augmentedPrompt}\n\n${connectionsBlock}` : augmentedPrompt;
   if (existingSystem) {
-    existingSystem.content = augmentedPrompt;
+    existingSystem.content = systemPrompt;
   } else {
-    messages = [{ role: 'system', content: augmentedPrompt }, ...messages];
+    messages = [{ role: 'system', content: systemPrompt }, ...messages];
   }
   if (extensions.warnings.length) {
     emit({ type: 'notice', level: 'warn', message: extensions.warnings.join(' ') });
@@ -549,18 +596,40 @@ async function runAgentTurn(ctx) {
         continue;
       }
 
+      /* What the user is being asked to allow.
+       *
+       * Read from the tool's own permission rather than from a list of names.
+       * The hardcoded list was the hole: it knew only about local effects, so an
+       * action that leaves the machine — one that goes out as the user, is seen
+       * by other people and cannot be taken back — reached a third party with no
+       * prompt at all in "ask" mode. `read` still never asks; `write`, `exec` and
+       * `send` all do, and `send` is resolved per call, because one service tool
+       * spans all three levels. */
+      const permission = permissionForCall(name, args);
       const needsApproval =
-        approvalMode === 'ask' && (name === 'run_command' || name === 'write_file' || name === 'edit_file');
+        approvalMode === 'ask' && (permission === 'write' || permission === 'exec' || permission === 'send');
 
       if (needsApproval && typeof ctx.requestApproval === 'function') {
+        const reason = approvalReason(permission, name, args);
+        /* The dialog the client renders names the tool and shows its arguments,
+         * which for a service call reads "Klaud wants to run use_gmail" — the
+         * wrong sentence for an email that goes out as the user. `send` is the
+         * level where believing the wrong sentence costs the most, so the reason
+         * is also emitted as a notice, which the transcript does render, and it
+         * travels in the approval request for a dialog that shows it. */
+        if (permission === 'send') emit({ type: 'notice', level: 'warn', message: reason });
+
         let approved = false;
         try {
-          approved = await ctx.requestApproval({ id: call.id, name, args, permission: 'write' });
+          approved = await ctx.requestApproval({ id: call.id, name, args, permission, reason });
         } catch {
           approved = false;
         }
         if (!approved) {
-          const message = `The user denied permission to run ${name}. Do not retry it; ask what they would prefer instead.`;
+          const message =
+            permission === 'send'
+              ? `The user denied permission for ${name} to act on their behalf. Nothing was sent; do not retry it, and ask what they would prefer instead.`
+              : `The user denied permission to run ${name}. Do not retry it; ask what they would prefer instead.`;
           emit({ type: 'tool_result', id: call.id, name, ok: false, output: message, durationMs: 0, denied: true });
           emit({ type: 'approval_denied', id: call.id, name });
           record({ role: 'tool', tool_call_id: call.id, content: message });
@@ -588,6 +657,12 @@ async function runAgentTurn(ctx) {
                 approvalMode,
                 signal: ctx.signal,
                 agentDirs: extensions.agentDirs,
+                /* Forwarded, not dropped. Without this a subagent's own writes
+                 * and commands bypassed the "Ask first" setting entirely: the
+                 * user approved the delegation, and the nested turn then did as
+                 * it liked. runSubagent namespaces the approval id per
+                 * delegation so nested ids cannot collide with this turn's. */
+                requestApproval: ctx.requestApproval,
                 onEvent: emit,
               })
           : undefined,

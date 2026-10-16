@@ -66,6 +66,10 @@ async function api(path, { method = 'GET', body, headers = {} } = {}) {
     const message = payload?.error || `HTTP ${res.status}`;
     const err = new Error(message);
     err.status = res.status;
+    // Some failures carry their own next step — the connections API answers 400
+    // for "you have no OAuth client yet" and sends the setup hint with it. The
+    // hint is worth more than the message, so it travels on the error.
+    if (payload && typeof payload.hint === 'string' && payload.hint.trim()) err.hint = payload.hint.trim();
     throw err;
   }
   return payload;
@@ -2208,7 +2212,25 @@ async function openFreeProviders() {
  * Modals
  * ------------------------------------------------------------------ */
 
+/**
+ * Stop whatever the mounted modal was doing.
+ *
+ * Anything the modal was polling or timing has to stop with it: a flow left
+ * polling after the panel is gone keeps hitting the API for a UI nobody can
+ * see, and a stale repaint would land in the next modal. Idempotent, because
+ * both closing and replacing a modal run it.
+ */
+function runModalCleanup() {
+  const cleanup = dom.modalRoot.__cleanup;
+  dom.modalRoot.__cleanup = null;
+  if (typeof cleanup !== 'function') return;
+  try {
+    cleanup();
+  } catch { /* a broken cleanup must not block the close */ }
+}
+
 function closeModal() {
+  runModalCleanup();
   dom.modalRoot.innerHTML = '';
   document.removeEventListener('keydown', onModalKey);
 }
@@ -2218,6 +2240,11 @@ function onModalKey(event) {
 }
 
 function mountModal(html) {
+  // Run the outgoing modal's cleanup before its markup is replaced. A modal can
+  // be swapped rather than closed — the free picker from Settings does exactly
+  // that — so this cannot live only in closeModal, or a panel that polls would
+  // keep polling behind whichever modal replaced it.
+  runModalCleanup();
   dom.modalRoot.innerHTML = `<div class="overlay" data-overlay><div class="modal" role="dialog" aria-modal="true">${html}</div></div>`;
   dom.modalRoot.querySelector('[data-overlay]').addEventListener('mousedown', (event) => {
     if (event.target.dataset.overlay !== undefined) closeModal();
@@ -2285,6 +2312,433 @@ function reasoningEffortHint(baseUrl) {
     : 'How much the model should think before answering. This endpoint is not known to accept an effort setting, so Klaud sends nothing — an unsupported parameter makes some providers reject the whole request.';
 }
 
+/* ------------------------------------------------------------------ *
+ * Connections — OAuth services Klaud can act on as you
+ *
+ * The back end for this is `src/lib/routes-connections.js`, and the client
+ * follows what it actually does rather than what a brief might have described:
+ *
+ *   GET    /api/connections            the service catalogue and its state
+ *   POST   /api/connections/:id/connect  starts the flow, answers immediately
+ *   GET    /api/connections/:id/status   progress for one flow
+ *   DELETE /api/connections/:id          disconnect
+ *
+ * The POST is deliberately NOT a streamed request. The user leaves for a
+ * browser, signs in, and clicks Allow, which is a minute of wall clock; a
+ * response held open that long is indistinguishable from a hang, and the
+ * server says so in its own comment. Progress therefore arrives by polling,
+ * which also survives a page reload in the middle of the flow.
+ *
+ * The listing is the source of truth, so there is no optimistic "connected" —
+ * a state Klaud cannot see is a state the panel does not claim.
+ * ------------------------------------------------------------------ */
+
+const CONN_POLL_MS = 1200;
+// The server's own flow timeout is five minutes; the panel gives up slightly
+// after that, so a flow that vanishes without a verdict still ends in words.
+const CONN_POLL_LIMIT_MS = 5.5 * 60 * 1000;
+
+const CONN_ACTING_NOTE =
+  'Klaud uses these connections as you, not as a separate account: mail sent through ' +
+  'Gmail comes from your address. Anything that sends is marked Send below, and in the ' +
+  '"Ask first" permission mode it is confirmed before it goes out.';
+
+/** The account a connection is for, if the listing names one. */
+function connAccount(conn) {
+  if (!conn || typeof conn !== 'object') return '';
+  for (const key of ['account', 'accountEmail', 'email', 'account_email', 'user']) {
+    const value = conn[key];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return '';
+}
+
+/**
+ * Every service, one row, merging the catalogue with whatever state the listing
+ * carries.
+ *
+ * The two halves of the payload name a connector differently — the catalogue by
+ * `id`, a stored connection by `connectorId` (: `connectionSummary`) — and a
+ * merged row is the only shape the panel can render, so both spellings are
+ * accepted rather than silently producing blank rows.
+ */
+function connRows(data) {
+  const available = Array.isArray(data?.available) ? data.available : [];
+  const connections = Array.isArray(data?.connections) ? data.connections : [];
+  const idOf = (entry) => String(entry?.id ?? entry?.connectorId ?? '');
+
+  const rows = available
+    .filter((entry) => idOf(entry))
+    .map((entry) => {
+      const id = idOf(entry);
+      const conn = connections.find((c) => idOf(c) === id) || null;
+      return {
+        id,
+        label: entry.label || id,
+        configured: entry.configured !== false,
+        connected: Boolean(entry.connected ?? conn?.connected),
+        needsReconnect: Boolean(entry.needsReconnect ?? conn?.needsReconnect ?? entry.expired ?? conn?.expired),
+        account: connAccount(entry) || connAccount(conn),
+        setupHint: typeof entry.setupHint === 'string' ? entry.setupHint : '',
+        actions: Array.isArray(entry.actions) ? entry.actions : [],
+        connecting: entry.connecting || null,
+        connectError: entry.connectError || null,
+      };
+    });
+
+  // A connection that the catalogue does not mention (a connector file removed
+  // since, say) is still a credential on this machine. It is shown, so that
+  // Disconnect stays reachable rather than the row vanishing with the state.
+  for (const conn of connections) {
+    const id = idOf(conn);
+    if (!id || rows.some((r) => r.id === id)) continue;
+    rows.push({
+      id,
+      label: conn.label || id,
+      configured: true,
+      connected: Boolean(conn.connected),
+      needsReconnect: Boolean(conn.needsReconnect ?? conn.expired),
+      account: connAccount(conn),
+      setupHint: '',
+      actions: [],
+      connecting: null,
+      connectError: null,
+    });
+  }
+  return rows;
+}
+
+/** Actions, with anything that sends called out, because that is what leaves. */
+function connActions(row) {
+  if (!row.actions.length) return '';
+  return `<ul class="conn-actions">${row.actions
+    .map((action) => {
+      const name = escapeHtml(action.label || action.name || 'action');
+      return action.permission === 'send'
+        ? `<li><span class="conn-name">${name}</span><span class="conn-perm">Send</span></li>`
+        : `<li><span class="conn-name">${name}</span></li>`;
+    })
+    .join('')}</ul>`;
+}
+
+function connStateChip(row) {
+  if (row.connecting === 'failed' || row.connectError) return '<span class="pchip warn">failed</span>';
+  if (row.connecting && row.connecting !== 'done') return '<span class="pchip accent">waiting for you</span>';
+  if (!row.connected) return '<span class="pchip">not connected</span>';
+  if (row.needsReconnect) return '<span class="pchip warn">needs reconnect</span>';
+  return '<span class="pchip ok">connected</span>';
+}
+
+/** One service row. */
+function connRowHtml(row) {
+  const progress = row.connecting && row.connecting !== 'done'
+    ? `<div class="conn-progress" data-conn-live="${escapeHtml(row.id)}" role="status" aria-live="polite">
+         ${icon('i-spinner')}<span data-conn-progress-text>Waiting for the browser to finish…</span>
+         <span class="conn-elapsed" data-conn-elapsed>0s</span>
+       </div>`
+    : '';
+  const failure = row.connectError
+    ? `<div class="status-line bad">${icon('i-warn')}<span>${escapeHtml(row.connectError)}</span></div>`
+    : '';
+
+  // An unconfigured connector shows its setup hint instead of a button that
+  // cannot work. This is the state most people arrive in, so it is a full
+  // answer with the settings key named, not a one-line apology.
+  const action = row.configured
+    ? row.connected
+      ? `<button type="button" class="btn btn-ghost btn-sm" data-conn-disconnect="${escapeHtml(row.id)}"
+             aria-label="Disconnect ${escapeHtml(row.label)}">Disconnect</button>`
+      : `<button type="button" class="btn btn-primary btn-sm" data-conn-connect="${escapeHtml(row.id)}">Connect</button>`
+    : '';
+
+  const setup = row.configured
+    ? ''
+    : `<div class="conn-setup">
+         <div class="conn-setup-head">${icon('i-key')}<strong>Not configured yet</strong></div>
+         <p class="conn-setup-text">${escapeHtml(row.setupHint || `${row.label} needs an OAuth client of your own before it can connect.`)}</p>
+         <p class="conn-setup-where">When you have both values, add them to <code>${escapeHtml(
+           settings.info?.dataDir || '~/.klaud'
+         )}/settings.json</code> as <code>${escapeHtml(row.id)}.clientId</code> and <code>${escapeHtml(
+           row.id
+         )}.clientSecret</code>. This panel reads that file, so it picks them up on the next read — there is no field for them here, because a client secret is a credential Klaud has to load from disk rather than collect through a form.</p>
+       </div>`;
+
+  const meta = [
+    row.account ? `<span class="conn-account">${escapeHtml(row.account)}</span>` : '',
+    row.connected && !row.account
+      ? '<span class="conn-account muted">connected — the listing does not name the account</span>'
+      : '',
+  ]
+    .filter(Boolean)
+    .join('');
+
+  return `<div class="conn-row" data-conn-row="${escapeHtml(row.id)}">
+      <div class="conn-head">
+        <div class="conn-title">
+          <span class="conn-name-main">${escapeHtml(row.label)}</span>
+          ${connStateChip(row)}
+        </div>
+        ${meta}
+      </div>
+      ${connActions(row)}
+      ${setup}
+      ${progress}
+      ${failure}
+      ${action ? `<div class="conn-foot">${action}</div>` : ''}
+    </div>`;
+}
+
+function connPanelShell() {
+  return `<div class="conn-panel" id="s-connections" data-conn-panel>
+      <div class="conn-lead">${icon('i-shield')}<span>${escapeHtml(CONN_ACTING_NOTE)}</span></div>
+      <div data-conn-list><div class="conn-empty">Reading connections…</div></div>
+      <div class="conn-foot-note">
+        <button type="button" class="conn-refresh" data-conn-refresh>Refresh</button>
+        <span data-conn-status></span>
+      </div>
+    </div>`;
+}
+
+/**
+ * Wire the panel: load, connect, disconnect, and poll a flow to its verdict.
+ *
+ * Everything here fails loudly and specifically. A connection that cannot be
+ * established is reported with the server's own words, because the alternative —
+ * a control that looks like it worked — is the one outcome this feature must
+ * never produce.
+ */
+function wireConnections(root, { onChange } = {}) {
+  const panel = root.querySelector('[data-conn-panel]');
+  if (!panel) return () => {};
+
+  const list = panel.querySelector('[data-conn-list]');
+  const footStatus = panel.querySelector('[data-conn-status]');
+  const refreshButton = panel.querySelector('[data-conn-refresh]');
+  let rows = [];
+  let poll = null;
+  let disposed = false;
+
+  const say = (message, kind = '') => {
+    if (!footStatus) return;
+    footStatus.className = kind ? `conn-foot-msg ${kind}` : 'conn-foot-msg';
+    footStatus.textContent = message || '';
+  };
+
+  const paint = () => {
+    if (disposed) return;
+    list.innerHTML = rows.length
+      ? rows.map(connRowHtml).join('')
+      : `<div class="conn-empty">
+           No services are available to connect yet. Klaud reads them from
+           <code>src/lib/connectors/</code> on the server, so this list fills in when one is installed.
+         </div>`;
+  };
+
+  const markConnecting = (id, state) => {
+    const row = rows.find((r) => r.id === id);
+    if (row) {
+      row.connecting = state;
+      row.connectError = null;
+    }
+  };
+
+  const load = async ({ quiet = false } = {}) => {
+    try {
+      const data = await api('/api/connections');
+      rows = connRows(data);
+      paint();
+      const warnings = Array.isArray(data?.warnings) ? data.warnings.filter(Boolean) : [];
+      if (warnings.length) say(warnings.join(' · '), 'warn');
+      else if (!quiet) say('');
+      return data;
+    } catch (err) {
+      // A missing route is the honest case to name: `api()` turns a 404 into
+      // "HTTP 404", which reads as a broken app rather than an absent feature.
+      rows = [];
+      list.innerHTML = `<div class="conn-fail">
+          ${icon('i-warn')}
+          <div>
+            <strong>Could not read the connections API.</strong>
+            <p>${escapeHtml(err.message)}${
+              /404|HTTP 404/.test(err.message)
+                ? ' — this build has no <code>/api/connections</code> route, so nothing can be connected from here yet.'
+                : ''
+            }</p>
+          </div>
+        </div>`;
+      say(err.message, 'bad');
+      return null;
+    }
+  };
+
+  const stopPolling = () => {
+    if (poll) {
+      clearInterval(poll.timer);
+      clearInterval(poll.ticker);
+      poll = null;
+    }
+  };
+
+  /** Poll one flow until it reports a verdict, then let the list tell the truth. */
+  const startPolling = (id, label) => {
+    stopPolling();
+    const startedAt = Date.now();
+    const live = () => document.querySelector(`[data-conn-live="${CSS.escape(id)}"]`);
+    const setLive = (text) => {
+      const node = live();
+      if (node) {
+        const target = node.querySelector('[data-conn-progress-text]');
+        if (target) target.textContent = text;
+      }
+    };
+
+    poll = {
+      timer: setInterval(async () => {
+        if (disposed) return stopPolling();
+        if (Date.now() - startedAt > CONN_POLL_LIMIT_MS) {
+          stopPolling();
+          setLive(`${label} did not report back in time. Check whether the browser window finished, then Refresh.`);
+          say(`${label} is still not connected. Nothing was saved.`, 'bad');
+          return;
+        }
+        try {
+          const state = await api(`/api/connections/${encodeURIComponent(id)}/status`);
+          const messages = Array.isArray(state?.messages) ? state.messages.filter(Boolean) : [];
+          const latest = messages.length ? String(messages[messages.length - 1]) : '';
+          if (state?.connecting === 'done') {
+            stopPolling();
+            // The verdict is not taken on trust: the connection has to be in the
+            // listing too, because "connected" is a claim about a credential on
+            // disk. If the two disagree, the panel says so rather than picking
+            // the more flattering one.
+            await load();
+            const row = rows.find((r) => r.id === id);
+            if (row && row.connected && !row.needsReconnect) {
+              say(`${label} is connected${row.account ? ` as ${row.account}` : ''}.`, 'ok');
+              onChange?.();
+            } else {
+              say(`${label} reported the flow as finished, but no connection is stored. Refresh to check again.`, 'bad');
+            }
+            return;
+          }
+          if (state?.connecting === 'failed') {
+            stopPolling();
+            await load();
+            say(state.error || state.hint || `${label} did not connect.`, 'bad');
+            return;
+          }
+          // `connecting: null` means there is no flow on the server any more —
+          // the panel was reloaded after it settled, or the route predates this
+          // one. The listing is then the only authority.
+          if (!state?.connecting) {
+            stopPolling();
+            await load();
+            const row = rows.find((r) => r.id === id);
+            say(
+              row && row.connected ? `${label} is connected.` : `${label} did not connect, and nothing was saved.`,
+              row && row.connected ? 'ok' : 'bad'
+            );
+            onChange?.();
+            return;
+          }
+          if (latest) setLive(latest);
+        } catch (err) {
+          // A transient failure is not a verdict: keep polling and let the next
+          // read settle it, rather than reporting a failure the server never did.
+          if (err.status === 404) {
+            stopPolling();
+            await load();
+            say(`The connections status endpoint is not available in this build; showing the last known state.`, 'warn');
+          }
+        }
+      }, CONN_POLL_MS),
+      // A separate ticker so the elapsed time moves even while a poll is in
+      // flight: a number that only updates on a round trip is the freeze this
+      // panel exists to avoid.
+      ticker: setInterval(() => {
+        const node = live();
+        if (!node) return;
+        const target = node.querySelector('[data-conn-elapsed]');
+        if (target) target.textContent = `${Math.round((Date.now() - startedAt) / 1000)}s`;
+      }, 1000),
+    };
+  };
+
+  const connect = async (id, label) => {
+    const button = panel.querySelector(`[data-conn-connect="${CSS.escape(id)}"]`);
+    if (button) {
+      button.disabled = true;
+      button.textContent = 'Waiting for you…';
+    }
+    say(`Starting the ${label} authorization…`);
+    try {
+      const started = await api(`/api/connections/${encodeURIComponent(id)}/connect`, { method: 'POST' });
+      markConnecting(id, 'waiting');
+      paint();
+      say(started?.hint || 'A browser window should have opened. Approve access there, then come back.', 'ok');
+      startPolling(id, label);
+    } catch (err) {
+      // A 400 here is not a bug: it is "you have no OAuth client configured
+      // yet", which is the whole reason the setup hint exists. 409 means a flow
+      // is already running — the panel then follows that one rather than
+      // starting a second.
+      paint();
+      say(err.hint || err.message, 'bad');
+      await load({ quiet: true });
+      if (err.status === 409) startPolling(id, label);
+    }
+  };
+
+  const disconnect = async (id, label) => {
+    const button = panel.querySelector(`[data-conn-disconnect="${CSS.escape(id)}"]`);
+    if (button) {
+      button.disabled = true;
+      button.textContent = 'Disconnecting…';
+    }
+    try {
+      const result = await api(`/api/connections/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      await load({ quiet: true });
+      say(result?.message || `${label} has been disconnected.`, 'ok');
+      onChange?.();
+    } catch (err) {
+      if (button) {
+        button.disabled = false;
+        button.textContent = 'Disconnect';
+      }
+      say(`Could not disconnect ${label}: ${err.message}`, 'bad');
+    }
+  };
+
+  // Delegated, so a repaint after every state change cannot lose the handlers.
+  panel.addEventListener('click', (event) => {
+    const connectButton = event.target.closest('[data-conn-connect]');
+    if (connectButton) {
+      const id = connectButton.dataset.connConnect;
+      const row = rows.find((r) => r.id === id);
+      connect(id, row?.label || id);
+      return;
+    }
+    const disconnectButton = event.target.closest('[data-conn-disconnect]');
+    if (disconnectButton) {
+      const id = disconnectButton.dataset.connDisconnect;
+      const row = rows.find((r) => r.id === id);
+      disconnect(id, row?.label || id);
+      return;
+    }
+    if (event.target.closest('[data-conn-refresh]')) {
+      say('Refreshing…');
+      load().then(() => say(''));
+    }
+  });
+
+  load();
+
+  return () => {
+    disposed = true;
+    stopPolling();
+  };
+}
+
 function openSettings() {
   // Every settings call needs a valid token; without one, the modal would mount
   // empty and the user would be stuck staring at nothing.
@@ -2336,7 +2790,12 @@ function openSettings() {
           <button type="button" data-mode="ask"><span>Ask first</span><small>confirm writes and commands</small></button>
           <button type="button" data-mode="readonly"><span>Read-only</span><small>no writes at all</small></button>
         </div>
-        <div class="hint">Ask first is the safest option when you point Klaud at a directory you care about.</div>
+        <div class="hint">Ask first is the safest option when you point Klaud at a directory you care about. It is also the mode that confirms a send on a connection below before it goes out.</div>
+      </div>
+
+      <div class="field">
+        <label>${icon('i-globe')} Connections</label>
+        ${connPanelShell()}
       </div>
 
       <div class="field">
@@ -2390,8 +2849,7 @@ function openSettings() {
     </div>
   `);
 
-  const modeButtons = dom.modalRoot.querySelectorAll('#s-mode [data-mode]');
-  const paintMode = (mode) => {
+  const modeButtons = dom.modalRoot.querySelectorAll('#s-mode [data-mode]');  const paintMode = (mode) => {
     modeButtons.forEach((b) => b.classList.toggle('on', b.dataset.mode === mode));
   };
   paintMode(config.approvalMode || 'auto');
@@ -2402,6 +2860,12 @@ function openSettings() {
     })
   );
   dom.modalRoot.dataset.mode = config.approvalMode || 'auto';
+
+  // The connections panel loads and polls on its own, and stops when the modal
+  // closes. Its state is not part of the Save button: a connection is a fact on
+  // disk, not a form field, so saving the form is neither required nor able to
+  // change it.
+  dom.modalRoot.__cleanup = wireConnections(dom.modalRoot);
 
   dom.modalRoot.querySelectorAll('[data-url]').forEach((button) => {
     button.addEventListener('click', () => {

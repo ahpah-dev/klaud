@@ -368,6 +368,117 @@ const finishTools = { choices: [{ index: 0, delta: {}, finish_reason: 'tool_call
     }
   });
 
+  /* ============ a subagent's writes are approved too ============ */
+
+  await describe('a subagent cannot write without approval', async () => {
+    /* The hole this pins: `runSubagent` did not forward `requestApproval`, so in
+     * "Ask first" mode a subagent's own write_file and run_command ran straight
+     * through. The parent asked once for the `task` call and the nested turn then
+     * did whatever it liked, which meant the permission setting described a
+     * boundary that did not exist. */
+    const provider = await startProvider((n, body) => {
+      const isNested = body.messages.some(
+        (m) => m.role === 'user' && String(m.content).includes('Write the file.')
+      );
+      if (isNested) {
+        const wrote = body.messages.some((m) => m.role === 'tool');
+        if (wrote) return stopChunk('I wrote it.');
+        return {
+          chunks: [
+            toolCallChunk('w1', 'write_file', JSON.stringify({ path: 'sub-made.txt', content: 'nested\n' })),
+            finishTools,
+          ],
+        };
+      }
+      if (n === 0) {
+        return {
+          chunks: [
+            toolCallChunk('t1', 'task', JSON.stringify({ description: 'write', prompt: 'Write the file.' })),
+            finishTools,
+          ],
+        };
+      }
+      return stopChunk('The subagent is done.');
+    });
+
+    const approvals = [];
+    try {
+      await agent().runAgentTurn({
+        settings: settingsFor(provider.url, { maxSteps: 4 }),
+        messages: [{ role: 'user', content: 'delegate a write' }],
+        cwd: workspace,
+        // Ask for absolutely everything, so a missing gate is unambiguous.
+        approvalMode: 'ask',
+        onEvent: () => {},
+        requestApproval: async (request) => {
+          approvals.push(request);
+          return true;
+        },
+      });
+
+      const askedForWrite = approvals.some((a) => a && a.name === 'write_file');
+      check('the nested write is put to the user', askedForWrite,
+        JSON.stringify(approvals.map((a) => a.name)));
+      check('the request carries the tool that will run',
+        approvals.every((a) => typeof a.name === 'string' && a.name.length > 0),
+        JSON.stringify(approvals));
+      check('nested approval ids cannot collide with the parent turn',
+        new Set(approvals.map((a) => a.id)).size === approvals.length,
+        JSON.stringify(approvals.map((a) => a.id)));
+      check('the file the subagent asked for was written once approved',
+        await fs.stat(path.join(workspace, 'sub-made.txt')).then(() => true).catch(() => false));
+    } finally {
+      await provider.close();
+      await fs.rm(path.join(workspace, 'sub-made.txt'), { force: true });
+    }
+  });
+
+  await describe('a denied nested write does not happen', async () => {
+    const provider = await startProvider((n, body) => {
+      const isNested = body.messages.some(
+        (m) => m.role === 'user' && String(m.content).includes('Write the file.')
+      );
+      if (isNested) {
+        const refused = body.messages.some(
+          (m) => m.role === 'tool' && /denied permission/i.test(String(m.content))
+        );
+        if (refused) return stopChunk('I could not write it.');
+        return {
+          chunks: [
+            toolCallChunk('w1', 'write_file', JSON.stringify({ path: 'never-made.txt', content: 'nope\n' })),
+            finishTools,
+          ],
+        };
+      }
+      if (n === 0) {
+        return {
+          chunks: [
+            toolCallChunk('t1', 'task', JSON.stringify({ description: 'write', prompt: 'Write the file.' })),
+            finishTools,
+          ],
+        };
+      }
+      return stopChunk('Done.');
+    });
+
+    try {
+      await agent().runAgentTurn({
+        settings: settingsFor(provider.url, { maxSteps: 4 }),
+        messages: [{ role: 'user', content: 'delegate a write' }],
+        cwd: workspace,
+        approvalMode: 'ask',
+        onEvent: () => {},
+        // Approve the delegation, refuse everything else.
+        requestApproval: async (request) => request.name !== 'write_file',
+      });
+      const exists = await fs.stat(path.join(workspace, 'never-made.txt')).then(() => true).catch(() => false);
+      check('a refused nested write leaves no file on disk', exists === false);
+    } finally {
+      await provider.close();
+      await fs.rm(path.join(workspace, 'never-made.txt'), { force: true });
+    }
+  });
+
   await describe('subagents can be switched off entirely', async () => {
     const provider = await startProvider((n) => {
       if (n === 0) {
