@@ -310,9 +310,9 @@ export function decorateCodeBlocks(root) {
     btn.className = 'copy-code';
     btn.type = 'button';
     btn.textContent = 'Copy';
-    btn.style.cssText =
-      'position:absolute;top:7px;right:7px;font-size:11px;padding:3px 8px;border-radius:6px;' +
-      'border:1px solid var(--border);background:var(--surface);color:var(--text-2);opacity:0;transition:opacity .13s';
+    // Appearance lives in styles.css. It was set inline here, and an inline
+    // `opacity: 0` cannot be overridden by a stylesheet — so a keyboard user,
+    // who never fires `mouseenter`, could never see the button at all.
     btn.addEventListener('click', async () => {
       try {
         await navigator.clipboard.writeText(code.textContent);

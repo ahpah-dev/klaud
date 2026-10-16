@@ -296,15 +296,25 @@ function parseToolArguments(raw) {
 const REASONING_EFFORT_LEVELS = ['low', 'medium', 'high'];
 
 /**
+ * A known level, or '' for anything else.
+ *
+ * Not a clamp: turning "banana" into "medium" would put a parameter on the wire
+ * that nobody selected, and the unset state has to stay reachable.
+ */
+function knownReasoningEffort(effort) {
+  const level = String(effort || '').trim().toLowerCase();
+  return REASONING_EFFORT_LEVELS.includes(level) ? level : '';
+}
+
+/**
  * How to say "reason more" to the endpoint at `baseUrl`.
  *
- * There is no single standard field for this, so the mapping names one exact
- * host plus the field that host documents, and returns undefined for everyone
- * else. That is the whole point of the function: a provider that does not know
- * a field answers 400 and the turn is dead, so a wrong guess is worse than
- * silence. Only add an entry here after reading the provider's own API
- * reference — "it is OpenAI-compatible" does not imply it validates unknown
- * body parameters the way OpenAI does.
+ * There is no single standard field for this, so this maps a host to the one
+ * field that host documents and returns an empty object for everyone else. That
+ * is the whole point: a provider that does not know a field answers 400 and the
+ * turn is dead, so a wrong guess is worse than silence. Only add an entry here
+ * after reading the provider's own API reference — "it is OpenAI-compatible"
+ * does not imply it tolerates unknown body parameters the way OpenAI does.
  *
  *   api.openai.com            reasoning_effort: "low" | "medium" | "high"
  *                             (the OpenAI reasoning-model parameter)
@@ -322,9 +332,7 @@ const REASONING_EFFORT_LEVELS = ['low', 'medium', 'high'];
  * here are the wire format.
  */
 function reasoningEffortFields(baseUrl, effort) {
-  const level = REASONING_EFFORT_LEVELS.includes(String(effort || '').trim().toLowerCase())
-    ? String(effort).trim().toLowerCase()
-    : '';
+  const level = knownReasoningEffort(effort);
   if (!level) return {};
 
   let host = '';
@@ -340,20 +348,18 @@ function reasoningEffortFields(baseUrl, effort) {
 }
 
 /**
- * The current level, set once from saved settings.
+ * Fallback level, used only when a caller does not pass one.
  *
- * `streamChat` is called by the agent loop, and the loop does not forward this
- * setting — it sends only baseUrl, model and temperature. Rather than guess a
- * level per request, the server pushes the value it loaded from
- * ~/.klaud/settings.json here. A pass-through is set, not merged, so clearing
- * the slider in the UI really does stop the field being sent.
+ * The agent loop forwards `settings.reasoningEffort` on every request, which is
+ * the path that matters. This exists for the callers that do not — the model
+ * list, and any direct call — so the server can still make the setting take
+ * effect everywhere without threading it through by hand. The value is replaced,
+ * never merged, so clearing the slider really does stop the field being sent.
  */
 let activeReasoningEffort = '';
 
 function configureReasoningEffort(effort) {
-  activeReasoningEffort = REASONING_EFFORT_LEVELS.includes(String(effort || '').trim().toLowerCase())
-    ? String(effort).trim().toLowerCase()
-    : '';
+  activeReasoningEffort = knownReasoningEffort(effort);
   return activeReasoningEffort;
 }
 

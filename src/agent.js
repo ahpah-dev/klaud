@@ -316,6 +316,9 @@ async function runAgentTurn(ctx) {
         messages: requestMessages,
         tools: toolsDisabled ? null : toolSchemas(),
         temperature: settings.temperature,
+        // Forwarded explicitly rather than read from module state inside the
+        // client: one request, one set of options, nothing ambient to go stale.
+        reasoningEffort: settings.reasoningEffort,
         signal: ctx.signal,
         onEvent: (event) => {
           if (event.type === 'usage') {
@@ -607,6 +610,7 @@ async function runAgentTurn(ctx) {
           messages,
           tools: null,
           temperature: settings.temperature,
+          reasoningEffort: settings.reasoningEffort,
           signal: ctx.signal,
           onEvent: (event) => {
             if (event.type === 'usage') emit({ type: 'usage', usage: event.usage });

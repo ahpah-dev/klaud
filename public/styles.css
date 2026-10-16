@@ -1438,10 +1438,11 @@ details[open] > .tool-head .chev {
   transition: border-color 0.16s var(--ease), box-shadow 0.16s var(--ease);
 }
 
-.composer:focus-within {
-  border-color: color-mix(in srgb, var(--accent) 60%, var(--border-strong));
-  box-shadow: var(--shadow), 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
-}
+/* The prompt box carries no accent of its own. Both this rule and its twin in
+   the polish layer used to add a terracotta border and a 3px accent glow here,
+   which is exactly what read as an "orange outline" the moment the field was
+   clicked. Its focus indication is defined once, in the polish layer under
+   "focus: one consistent ring". Do not reintroduce an accent ring here. */
 
 .composer textarea {
   width: 100%;
@@ -1726,6 +1727,101 @@ details[open] > .tool-head .chev {
   background: var(--accent-soft);
   color: var(--accent-text);
   font-weight: 600;
+}
+
+/* A single slider with its current value beside it. The value is a chip rather
+   than plain text so the level reads as a setting, matching .pchip. Both the
+   track and the thumb need vendor prefixes: there is no build step, so nothing
+   rewrites a standard-only ::-webkit-slider-thumb for Chromium. */
+.slider-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.slider-row input[type="range"] {
+  flex: 1;
+  min-width: 0;
+  height: 22px;
+  margin: 0;
+  padding: 0;
+  background: none;
+  -webkit-appearance: none;
+  appearance: none;
+  outline: none;
+}
+
+.slider-row input[type="range"]::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.slider-row input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  margin-top: -7px;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  cursor: pointer;
+  transition: border-color 0.12s var(--ease), background 0.12s var(--ease);
+}
+
+.slider-row input[type="range"]:hover::-webkit-slider-thumb {
+  background: var(--bg-alt);
+}
+
+.slider-row input[type="range"]:focus-visible::-webkit-slider-thumb {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent);
+}
+
+.slider-row input[type="range"]::-moz-range-track {
+  height: 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.slider-row input[type="range"]::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.slider-row input[type="range"]:focus-visible::-moz-range-thumb {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent);
+}
+
+.slider-row .slider-value {
+  flex: none;
+  min-width: 116px;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-2);
+  transition: background 0.12s var(--ease), color 0.12s var(--ease);
+}
+
+/* Painted only while the slider is being moved, so the chip reads as a value
+   that just changed rather than as a permanent accent. */
+.slider-row .slider-value.on {
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  background: var(--accent-soft);
+  color: var(--accent-text);
 }
 
 .status-line {
@@ -2978,7 +3074,13 @@ body {
 }
 
 .composer:focus-within {
-  box-shadow: 0 1px 2px rgba(30, 22, 18, 0.04), 0 10px 36px -12px rgba(30, 22, 18, 0.2), var(--ring);
+  border-color: var(--border-strong);
+  box-shadow: 0 1px 2px rgba(30, 22, 18, 0.04), 0 10px 36px -12px rgba(30, 22, 18, 0.2);
+}
+
+/* Dark mode keeps its own depth values; the rule above is light-mode shadow. */
+[data-theme="dark"] .composer:focus-within {
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 12px 38px -14px rgba(0, 0, 0, 0.78);
 }
 
 .send-btn {
@@ -3036,23 +3138,52 @@ body {
 }
 
 /* --- focus: one consistent ring --------------------------------------- */
-/* The prompt box is excluded on purpose. It sits inside `.composer`, which
-   already draws the border and glow on `:focus-within`, so the ring added a
-   second outline just inside the first — the "weird outline" that appeared the
-   moment you clicked into the field. The container is the focus indicator
-   there, and it covers the whole control rather than the invisible textarea
-   bounds. */
-:where(button, a, input, select, summary, [tabindex]):focus-visible {
+/* A focus ring is for keyboard users only. `:focus-visible` alone does not
+   separate the two here: Chrome always matches it for a textarea, so clicking
+   the prompt box was indistinguishable from tabbing into it and the composer
+   painted an accent ring on a plain mouse click. `[data-kb]` is set by app.js
+   on Tab and cleared by any pointer or by typing, which is the signal a browser
+   does not otherwise give you. */
+[data-kb] :where(button, a, input, select, summary, [tabindex], [role="button"])
+  :not(.composer textarea):focus-visible {
   outline: none;
   box-shadow: var(--ring);
   border-color: color-mix(in srgb, var(--accent) 55%, var(--border-strong));
   border-radius: var(--radius-sm);
 }
 
-textarea:focus,
-textarea:focus-visible {
+/* Sidebar rows are divs with role=button, so they hold a real radius rather
+   than the square fallback a button would tolerate. */
+[data-kb] .chat-item:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+/* The field is wide, rounded and the whole point of the screen, so its focus
+   indication is the container itself: a hair darker edge, a touch more lift.
+   Deliberately no accent and no glow ring when a pointer is what focused it. */
+.composer:focus-within {
+  border-color: color-mix(in srgb, var(--border-strong) 82%, var(--text-3));
+}
+
+.composer:focus-within textarea,
+.composer textarea:focus,
+.composer textarea:focus-visible {
   outline: none;
   box-shadow: none;
+}
+
+/* Keyboard only, and only when the prompt itself holds focus: the same field
+   gets a real, visible ring. Keyed off #prompt rather than `:focus-within` so
+   Tab onto one of the chips inside the composer lights the chip, not the whole
+   container behind it. */
+[data-kb] .composer:has(#prompt:focus) {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border-strong));
+  box-shadow: 0 1px 2px rgba(30, 22, 18, 0.04), 0 10px 36px -12px rgba(30, 22, 18, 0.2), var(--ring);
+}
+
+[data-kb][data-theme="dark"] .composer:has(#prompt:focus) {
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 12px 38px -14px rgba(0, 0, 0, 0.78), var(--ring);
 }
 
 /* --- scrollbars: thinner, quieter ------------------------------------- */
@@ -3522,4 +3653,230 @@ textarea:focus-visible {
   .welcome .mark {
     animation: none;
   }
+}
+
+/* ==========================================================================
+   Polish pass: quieting what was too loud.
+
+   Everything above already laid the shell out. What follows is a consistency
+   pass against the reference — smaller sidebar rows, a top bar that stops
+   announcing itself, and the last few places still painting a saturated fill
+   where a paper neutral would read better. All of it is additive and last in
+   the file, so the cascade resolves in its favour by source order and nothing
+   needs `!important`.
+   ========================================================================== */
+
+/* --- chat list: small, quiet rows -------------------------------------- */
+/* 1px between rows made the list read as one block with lines through it. Two
+   pixels keeps the column compact while each row stays its own target, and the
+   row is still 34px tall — the reference's rows are around that, not larger. */
+.chat-list {
+  gap: 2px;
+}
+
+.chat-item {
+  padding: 6px 6px 6px 11px;
+  color: var(--text-2);
+  transition: background 0.12s var(--ease), color 0.12s var(--ease);
+}
+
+/* Hover is the pointer saying "this one"; the active row is the app saying it.
+   The active state has to stay the stronger of the two, so hover is lighter
+   than it was — at 6% black it was indistinguishable from the 8% active fill. */
+.chat-item:hover {
+  background: color-mix(in srgb, var(--text) 4.5%, transparent);
+  color: var(--text);
+}
+
+.chat-item.active {
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+}
+
+/* The delete affordance appears on hover. A plain opacity flip at 18px made the
+   row jump as the icon appeared; a fixed 22px target and a hairline of its own
+   keeps the row still and gives it something to be clicked. */
+.chat-item .del {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid transparent;
+  color: var(--text-3);
+  transition: opacity 0.12s var(--ease), color 0.12s var(--ease),
+    background 0.12s var(--ease), border-color 0.12s var(--ease);
+}
+
+.chat-item:hover .del,
+.chat-item .del:focus-visible {
+  opacity: 1;
+}
+
+.chat-item .del:hover {
+  color: var(--err);
+  background: var(--err-soft);
+  border-color: color-mix(in srgb, var(--err) 25%, transparent);
+}
+
+/* No hover on a touch screen, so a hidden control would be unreachable there. */
+@media (pointer: coarse) {
+  .chat-item .del {
+    opacity: 1;
+  }
+}
+
+/* --- top bar: present, not attention-seeking ---------------------------- */
+/* A blurred translucent strip with a hairline under it reads as chrome. The
+   canvas behind it is already uniform, so the blur bought nothing and the
+   colour shift at the seam was visible. Solid, and no border at all. */
+.topbar {
+  background: var(--bg);
+  backdrop-filter: none;
+  border-bottom: none;
+}
+
+/* --- buttons and chips: one hover, one active --------------------------- */
+/* `.chip-select` was the only control that changed a border on hover while
+   every neighbour changed a background, so the row of chips above the input
+   hovered inconsistently. Transparent border + surface fill matches them all,
+   and the transition list now names every property that actually animates. */
+.chip-select {
+  border-color: transparent;
+  background: transparent;
+  transition: background 0.12s var(--ease), color 0.12s var(--ease),
+    border-color 0.12s var(--ease);
+}
+
+.chip-select:hover {
+  background: var(--surface-2);
+  border-color: transparent;
+  color: var(--text);
+}
+
+.chip-select:active {
+  background: var(--bg-sunken);
+}
+
+.workspace-chip {
+  transition: border-color 0.12s var(--ease), background 0.12s var(--ease),
+    color 0.12s var(--ease);
+}
+
+.workspace-chip:hover {
+  border-color: var(--border-strong);
+}
+
+.workspace-chip:active {
+  background: var(--bg-sunken);
+}
+
+/* A disabled send button held a 40%-opacity terracotta disc, which is still the
+   most saturated thing on an empty screen and reads as an enabled button that
+   will not respond. Paper-toned until there is something to send. */
+.send-btn {
+  box-shadow: none;
+}
+
+.send-btn:disabled {
+  opacity: 1;
+  background: var(--bg-sunken);
+  color: var(--text-3);
+}
+
+/* --- transcript: breathing room around the tool cards ------------------- */
+/* The rules above address `.prose + .tools`, but a tool card is rendered a
+   level deeper inside `.block-body`, so that selector never matched and the
+   only thing separating prose from a card was the card's own margin. */
+.block-body > .prose + .tools,
+.block-body > .prose + details.tool,
+.block-body > .tools + .prose,
+.block-body > details.tool + .prose {
+  margin-top: 13px;
+}
+
+.tool-head {
+  padding: 8px 12px;
+}
+
+.tool {
+  border-radius: 12px;
+}
+
+/* Inline code in a tool result sits on the sunken body; the global rule gives
+   it a second box that read as a nested card. */
+.tool-body code {
+  background: none;
+  border: none;
+  padding: 0;
+}
+
+/* --- code blocks: the language label stops colliding with the code ------ */
+/* The label is absolutely positioned at the top-left, so the code has to leave
+   it a line of its own. 12px was less than the label's own height, which is what
+   put "JS" on the first line; 19px cleared it but added a band of empty box
+   above a two-line snippet. 15px is the label's exact height at these settings,
+   so the clearance is real and the block stays tight. 1.6 = 15px/0.875em. */
+.prose pre[data-lang]:not([data-lang=""]) code {
+  padding-top: 1.6em;
+}
+
+.prose pre .lang {
+  top: 10px;
+  line-height: 1;
+}
+
+/* The copy button was positioned and faded by an inline style, which no
+   stylesheet rule can override — so it was invisible to keyboard users, who
+   never fire `mouseenter`. The class now carries the whole appearance and both
+   input paths reveal it. */
+.prose pre .copy-code {
+  transition: opacity 0.13s var(--ease), color 0.12s var(--ease),
+    border-color 0.12s var(--ease);
+}
+
+.prose pre:hover .copy-code,
+.prose pre:focus-within .copy-code,
+.prose pre .copy-code:focus-visible {
+  opacity: 1;
+}
+
+/* No hover on a touch screen. */
+@media (pointer: coarse) {
+  .prose pre .copy-code {
+    opacity: 1;
+  }
+}
+
+/* --- welcome: the underline under "go" actually renders ----------------- */
+/* It was given `z-index: -1`, which painted it behind `.app` (the nearest
+   stacking context) rather than behind the word — invisible in both themes. A
+   stacking context on the `<em>` puts it where the rule always intended. */
+.welcome h1 em {
+  z-index: 0;
+}
+
+/* ...and sits under the word instead of through it. At `bottom: 0.04em` of a
+   face with generous descenders the band crossed the descender of the "g", so
+   "go" read as struck through. Below the descender it reads as an underline. */
+.welcome h1 em::after {
+  bottom: -0.04em;
+  height: 0.16em;
+}
+
+/* --- the one accent left in an inline notice ---------------------------- */
+/* `.notice.info` was a peach fill with terracotta text — the loudest thing in
+   the transcript for what is a footnote. The icon keeps the accent; the box
+   becomes paper, matching `.setup-note`. */
+.notice.info {
+  background: var(--surface-2);
+  border-color: var(--border);
+  color: var(--text-2);
+}
+
+.notice.info svg {
+  color: var(--accent);
+}
+
+/* --- the recommended provider card -------------------------------------- */
+/* The gradient over a 42%-accent border was two accent signals doing one job. */
+.pcard.best {
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
 }

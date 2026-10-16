@@ -182,6 +182,37 @@ Nine tools, all confined to the working directory you choose:
 The model sees each result, so it can run a build, read the error, fix the file,
 and run it again — up to the step limit you configure.
 
+### How the loop avoids getting stuck
+
+A model that keeps asking for the same thing is the classic failure of a tool
+loop, and it is worst on the free tiers this app targets. Klaud guards against it
+in the loop itself rather than trusting the model to notice:
+
+- **Identical calls are refused.** A repeat of a call already made this turn is
+  answered with the earlier result and a warning; a second repeat is blocked
+  outright. Calls with *different* arguments are untouched — that is real work.
+  Argument comparison ignores key order, so `{"a":1,"b":2}` and `{"b":2,"a":1}`
+  count as the same call.
+- **A repeated step ends the turn.** If a whole step repeats, the loop stops and
+  the model is asked for a final answer with tools withheld. The alternative is
+  burning every remaining step and a chunk of your rate limit for nothing.
+- **Failures carry a next action.** A tool error is appended with a concrete
+  alternative — read the file first, check the path with `glob_files`, use the
+  native shell equivalent. A bare "not found" gives the model nothing to change,
+  which is exactly why it retries.
+- **The step limit is announced.** Two steps before the cap the model is told to
+  stop starting things and write a summary, so a long job ends with a hand-off
+  rather than mid-sentence.
+- **A silent finish is challenged once.** Some models complete the work and then
+  end the turn without writing anything, leaving an empty reply. Klaud asks once,
+  explicitly, for prose. If the model stays silent it says so rather than showing
+  a blank transcript.
+- **Throttling is respected, not hammered.** `Retry-After` and waits quoted in
+  the provider's message ("retry in 42s") are honoured. A fixed 1.5s backoff
+  against a per-minute free tier just burns every attempt and reports a failure
+  that would have cleared on its own. A wait longer than a minute fails fast with
+  the reason instead of appearing to hang.
+
 ### Permissions
 
 Three modes, switchable from the top bar:
@@ -237,6 +268,7 @@ Change any of this in Settings, or edit `~/.klaud/settings.json` directly.
 | API key | — | Stored locally, never sent to the browser |
 | Model | `gpt-4o-mini` | Load the full list from the endpoint |
 | Temperature | `0.2` | 0.1–0.3 is best for editing code |
+| Reasoning effort | Provider default | A slider: Provider default / Low / Medium / High. See below. |
 | Steps per turn | `12` | Tool round trips allowed in one request (max 40) |
 | History budget | `80000` | Characters of transcript per request (~20k tokens). Older turns are dropped when a long session outgrows it, newest kept. |
 | Working directory | The folder Klaud runs in | All tools are confined here |
@@ -245,6 +277,26 @@ Change any of this in Settings, or edit `~/.klaud/settings.json` directly.
 
 Environment overrides: `PORT`, `KLAUD_HOST`, `KLAUD_WORKSPACE`,
 `KLAUD_DATA_DIR`, `KLAUD_OPEN=1`.
+
+### Reasoning effort, and why most providers get nothing
+
+There is no standard field for this, so Klaud sends the one each host documents
+and **sends nothing at all** to everyone else:
+
+| Host | Field sent |
+| --- | --- |
+| `api.openai.com` | `reasoning_effort: "low" \| "medium" \| "high"` |
+| `openrouter.ai` | `reasoning: { effort: … }` — OpenRouter's normalised form, which it translates for whichever model it routes to |
+| `integrate.api.nvidia.com` | **nothing** — NVIDIA's NIM reference documents no effort parameter |
+| Groq, Google AI Studio, Mistral, DeepSeek, xAI, Cloudflare, Ollama, LM Studio, anything unknown | **nothing** |
+
+Silence is deliberate, not an oversight. A provider that does not recognise a
+body parameter can reject the entire request with a `400`, so one wrong guess
+kills the turn. "OpenAI-compatible" does not mean "tolerates unknown keys", and
+the Settings panel says plainly which of the two is happening for your endpoint.
+
+"Provider default" leaves the parameter off entirely, so nothing changes unless
+you move the slider.
 
 ## Where your data lives
 
@@ -331,23 +383,23 @@ Everything under `/api/*` needs the `x-klaud-token` header.
 npm test
 ```
 
-352 checks in total, no test framework, no dependencies. Every suite is
+601 checks in total, no test framework, no dependencies. Every suite is
 self-contained: they spawn their own servers on throwaway data directories, so
 running the tests can never disturb your real configuration.
 
 | Suite | Checks | What it proves |
 | --- | --- | --- |
-| `test/run.js` | 72 | Tool sandbox, shell exit codes, LLM client, agent loop, history pruning |
+| `test/run.js` | 108 | Tool sandbox, shell exit codes, LLM client, agent loop, **loop detection**, reasoning-effort wire format, retry timing, history pruning |
 | `test/markdown.mjs` | 29 | Markdown rendering and HTML escaping |
 | `test/ui-static.js` | 28 | Element ids, icon sprite, CSS coverage, module wiring |
 | `test/cloudflare-token.mjs` | 16 | Account IDs are read from every token claim shape, and never guessed |
 | `test/cloudflare-setup.js` | 42 | The setup path against a stand-in Cloudflare API, including empty account lists |
 | `test/cloudflare-errors.js` | 51 | Every Cloudflare failure explains itself; a bare "unknown" is impossible |
-| `test/providers.js` | 69 | Catalogue honesty, the NVIDIA recommendation, live lookups, no silent config changes |
+| `test/providers.js` | 79 | Catalogue honesty, the NVIDIA recommendation, live lookups, no silent config changes |
 | `test/e2e-http.js` | 37 | The full HTTP and SSE API, plus malformed-request resilience |
 | `test/auth-recovery.js` | 21 | A stale session token can be recovered with one click |
 | `test/folder-picker.js` | 30 | Typing a path, creating a folder, switching workspace |
-| `test/browser.js` | 91 | The app driven in headless Chrome, start to finish |
+| `test/browser.js` | 160 | The app driven in headless Chrome, start to finish, including that a mouse click paints no accent ring |
 
 `test/browser.js` is the important one. It launches Chrome, loads the real page,
 and fails on any uncaught exception or console error. It then types a message,

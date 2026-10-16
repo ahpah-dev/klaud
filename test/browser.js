@@ -225,6 +225,20 @@ class Browser {
     });
   }
 
+  /** A real left click at viewport coordinates, not a synthetic DOM event. */
+  async click(x, y) {
+    const base = { x, y, button: 'left', clickCount: 1, buttons: 1 };
+    await this.send('Input.dispatchMouseEvent', { type: 'mousePressed', ...base });
+    await this.send('Input.dispatchMouseEvent', { type: 'mouseReleased', ...base });
+  }
+
+  /** A real key press, so the page sees the same events a person produces. */
+  async key(key, code, virtualKeyCode) {
+    const base = { key, code, windowsVirtualKeyCode: virtualKeyCode };
+    await this.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', ...base });
+    await this.send('Input.dispatchKeyEvent', { type: 'keyUp', ...base });
+  }
+
   async goto(url, settleMs = 1200) {
     await this.send('Page.navigate', { url });
     await sleep(settleMs);
@@ -549,10 +563,113 @@ class Browser {
     check('the prompt box draws no ring inside the composer',
       focusRing.boxShadow === 'none', String(focusRing.boxShadow));
     // The container is still the focus indicator, so the field is not left with
-    // no feedback at all.
-    check('the composer container still shows focus',
-      String(focusRing.composerShadow).split('rgb').length > 3,
-      String(focusRing.composerShadow).slice(0, 90));
+    // no feedback at all. This used to be asserted by counting `rgb(`
+    // occurrences in the composer's box-shadow and requiring more than three —
+    // which only ever passed because a terracotta `--ring` was stacked onto the
+    // shadow on `:focus-within`. That ring was the "orange outline" users
+    // reported, so the old assertion encoded the bug. The intent is asserted
+    // properly, in colour, directly below.
+
+    /* ---- a mouse click must not paint an accent ring ----
+       The assertions above use `.focus()`, which is how the app focuses the
+       field on load — it says nothing about a real click. `:focus-visible`
+       cannot separate the two either, because Chrome matches it for a textarea
+       whatever the input was, so the exclusion has to be explicit. */
+    // The terracotta accent as either `rgb(217, 119, 87)` or the space-separated
+    // `color(srgb 0.851 0.467 0.341)` Chrome returns from color-mix(). Named
+    // once, because a regex this fiddly should exist in exactly one place.
+    const ACCENT_RE = /217,\s*119,\s*87|0\.85\d*[\s,]*0\.46\d*[\s,]*0\.34\d*/;
+    const blurThenFocus = await browser.evaluate(`
+      const box = document.querySelector('.composer');
+      document.getElementById('prompt').blur();
+      const blurred = getComputedStyle(box).borderColor;
+      document.getElementById('prompt').focus();
+      return { blurred, focused: getComputedStyle(box).borderColor };
+    `);
+    check('focus is still visible on the composer container',
+      blurThenFocus.blurred !== blurThenFocus.focused,
+      JSON.stringify(blurThenFocus));
+    check('...and that focus colour is not the accent',
+      !ACCENT_RE.test(String(blurThenFocus.focused)),
+      String(blurThenFocus.focused));
+
+    const ringBox = await browser.evaluate(`
+      const r = document.getElementById('prompt').getBoundingClientRect();
+      return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+    `);
+    await browser.click(ringBox.x, ringBox.y);
+    await sleep(300);
+    const clicked = await browser.evaluate(`
+      const ta = document.getElementById('prompt');
+      const cs = getComputedStyle(ta);
+      const box = getComputedStyle(document.querySelector('.composer'));
+      return {
+        active: document.activeElement.id,
+        outline: cs.outlineStyle, boxShadow: cs.boxShadow,
+        border: box.borderColor, shadow: box.boxShadow,
+        colourHidden: /rgba\\(0, 0, 0, 0\\)|transparent/.test(cs.outlineColor)
+      };
+    `);
+    check('a real mouse click focuses the prompt (so the checks below are meaningful)',
+      clicked.active === 'prompt', String(clicked.active));
+    check('a real mouse click draws no outline on the prompt',
+      clicked.outline === 'none', JSON.stringify(clicked));
+    check('a real mouse click draws no ring on the prompt',
+      clicked.boxShadow === 'none', String(clicked.boxShadow));
+    // `color(srgb 0.85 0.467 0.341)` and `rgb(217, 119, 87)` are both the
+    // terracotta accent. The reported bug was this colour reaching the field.
+    check('a real mouse click paints no terracotta border on the composer',
+      !ACCENT_RE.test(String(clicked.border)),
+      String(clicked.border));
+    check('a real mouse click paints no accent glow on the composer',
+      !ACCENT_RE.test(String(clicked.shadow)),
+      String(clicked.shadow).slice(0, 120));
+
+    /* ---- typing is not navigating: the ring must stay away ---- */
+    await browser.send('Input.dispatchKeyEvent', {
+      type: 'keyDown', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, text: 'a',
+    });
+    await browser.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65 });
+    await sleep(200);
+    const typed = await browser.evaluate(`
+      const box = getComputedStyle(document.querySelector('.composer'));
+      const ta = document.getElementById('prompt');
+      ta.value = '';
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+      return { kb: document.documentElement.dataset.kb || null, shadow: box.boxShadow, border: box.borderColor };
+    `);
+    check('typing after a click does not put an accent ring back',
+      !ACCENT_RE.test(String(typed.shadow)),
+      String(typed.shadow).slice(0, 120));
+    check('a pointer-focused composer is not flagged as keyboard navigation',
+      typed.kb === null, String(typed.kb));
+
+    /* ---- keyboard users still get a ring ---- */
+    await browser.key('Tab', 'Tab', 9);
+    await sleep(150);
+    await browser.evaluate(`document.getElementById('prompt').focus(); return true;`);
+    await sleep(250);
+    const keyboard = await browser.evaluate(`
+      const ta = document.getElementById('prompt');
+      const cs = getComputedStyle(ta);
+      const box = getComputedStyle(document.querySelector('.composer'));
+      return {
+        kb: document.documentElement.dataset.kb || null,
+        outline: cs.outlineStyle, ring: box.boxShadow,
+        border: box.borderColor, active: document.activeElement.id
+      };
+    `);
+    check('Tab switches the app into keyboard navigation',
+      keyboard.kb === '1', String(keyboard.kb));
+    check('a keyboard user still gets a visible focus ring on the composer',
+      ACCENT_RE.test(String(keyboard.ring)),
+      String(keyboard.ring).slice(0, 120));
+    check('the keyboard ring is on the container, never on the textarea itself',
+      keyboard.active === 'prompt' && keyboard.outline === 'none',
+      JSON.stringify({ active: keyboard.active, outline: keyboard.outline }));
+    // Hand the rest of the suite the same focus state it had before.
+    await browser.click(ringBox.x, ringBox.y);
+    await sleep(150);
 
     /* ---------- the sidebar toggle actually hides the sidebar ---------- */
     const sidebar = await browser.evaluate(`
@@ -1183,7 +1300,7 @@ class Browser {
     check('the assistant label has no letter-spacing',
       polish.roleSpacing === 'normal' || polish.roleSpacing === '0px', String(polish.roleSpacing));
     check('the assistant label is muted, not accent-coloured',
-      !/217,\\s*119,\\s*87/.test(String(polish.roleColour)), String(polish.roleColour));
+      !/217,\s*119,\s*87/.test(String(polish.roleColour)), String(polish.roleColour));
     check('the user message is a bubble, not a full-width band',
       polish.bubbleWidth !== null && polish.colWidth !== null && polish.bubbleWidth < polish.colWidth * 0.85,
       `bubble=${polish.bubbleWidth} column=${polish.colWidth}`);

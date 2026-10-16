@@ -1773,6 +1773,43 @@ const PRESETS = [
   { label: 'Mistral', url: 'https://api.mistral.ai/v1', model: 'mistral-large-latest' },
 ];
 
+const REASONING_STEPS = [
+  { value: '', label: 'Provider default' },
+  { value: 'low', label: 'Low' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'high', label: 'High' },
+];
+
+/**
+ * Whether the saved base URL is one the client will send an effort to.
+ *
+ * Host equality only: an OpenAI-compatible URL that merely contains "openai"
+ * would be claimed wrongly here, and a wrong "this will be sent" is the one
+ * thing this hint must not say.
+ */
+function reasoningEffortSent(baseUrl) {
+  let host = '';
+  try {
+    host = new URL(String(baseUrl || '')).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  return host === 'api.openai.com' || host === 'openrouter.ai' || host.endsWith('.openrouter.ai');
+}
+
+/**
+ * What the slider will actually do for the URL in the box, said out loud.
+ *
+ * Sending an unsupported parameter makes some providers reject the entire
+ * request, so Klaud drops it — and if it dropped it silently the setting would
+ * look broken. Better to name the reason.
+ */
+function reasoningEffortHint(baseUrl) {
+  return reasoningEffortSent(baseUrl)
+    ? 'How much the model should think before answering. Higher effort is slower and costs more tokens. This endpoint accepts the setting.'
+    : 'How much the model should think before answering. This endpoint is not known to accept an effort setting, so Klaud sends nothing — an unsupported parameter makes some providers reject the whole request.';
+}
+
 function openSettings() {
   // Every settings call needs a valid token; without one, the modal would mount
   // empty and the user would be stuck staring at nothing.
@@ -1855,6 +1892,15 @@ function openSettings() {
       </div>
 
       <div class="field">
+        <label>${icon('i-brain')} Reasoning effort</label>
+        <div class="slider-row">
+          <input type="range" id="s-effort" min="0" max="3" step="1" value="${REASONING_STEPS.findIndex((s) => s.value === (config.reasoningEffort || ''))}" aria-label="Reasoning effort" />
+          <span class="slider-value" id="s-effort-value">${escapeHtml((REASONING_STEPS.find((s) => s.value === (config.reasoningEffort || '')) || REASONING_STEPS[0]).label)}</span>
+        </div>
+        <div class="hint" id="s-effort-hint">${escapeHtml(reasoningEffortHint(config.baseUrl))}</div>
+      </div>
+
+      <div class="field">
         <label>System prompt</label>
         <textarea id="s-system" spellcheck="false">${escapeHtml(config.systemPrompt || '')}</textarea>
       </div>
@@ -1887,6 +1933,16 @@ function openSettings() {
       el('s-base').value = button.dataset.url;
       if (!el('s-model').value.trim()) el('s-model').value = button.dataset.model;
     });
+  });
+
+  // Both a preset button and the text field can change the URL, and the hint
+  // depends on which host that URL names, so it is repainted from either one.
+  const paintEffortHint = () => {
+    el('s-effort-hint').textContent = reasoningEffortHint(el('s-base').value.trim());
+  };
+  el('s-base').addEventListener('input', paintEffortHint);
+  dom.modalRoot.querySelectorAll('[data-url]').forEach((button) => {
+    button.addEventListener('click', paintEffortHint);
   });
 
   // Hop over to the free picker. It mounts into the same modal root, so the
@@ -1953,7 +2009,19 @@ function openSettings() {
     });
   });
 
+  // The range input carries an index, not one of the values: a range cannot
+  // represent "unset", and "Provider default" has to stay unset rather than
+  // become a level the provider never agreed to.
+  const paintEffort = () => {
+    const step = REASONING_STEPS[Number(el('s-effort').value)] || REASONING_STEPS[0];
+    el('s-effort-value').textContent = step.label;
+    el('s-effort-value').classList.toggle('on', Boolean(step.value));
+  };
+  paintEffort();
+  el('s-effort').addEventListener('input', paintEffort);
+
   el('s-save').addEventListener('click', async () => {
+    const effort = REASONING_STEPS[Number(el('s-effort').value)] || REASONING_STEPS[0];
     const patch = {
       baseUrl: el('s-base').value.trim(),
       model: el('s-model').value.trim(),
@@ -1962,6 +2030,7 @@ function openSettings() {
       maxSteps: Number(el('s-steps').value) || 12,
       maxContextChars: Number(el('s-context').value) || 80000,
       temperature: Number(el('s-temp').value),
+      reasoningEffort: effort.value,
       systemPrompt: el('s-system').value,
     };
     const key = el('s-key').value.trim();
@@ -2319,3 +2388,29 @@ async function boot() {
 }
 
 boot();
+
+/* ------------------------------------------------------------------ *
+ * Keyboard or pointer?
+ *
+ * A focus ring belongs to keyboard users. `:focus-visible` cannot answer that
+ * question here: Chrome always matches it for a textarea, so clicking the prompt
+ * box looked identical to tabbing into it and the composer painted an outline on
+ * a plain click. `data-kb` records how focus last arrived — set by Tab, cleared
+ * by any pointer or by typing — and CSS keys the ring off it, so a mouse user
+ * sees no ring and a keyboard user always does.
+ * ------------------------------------------------------------------ */
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Tab') {
+    document.documentElement.dataset.kb = '1';
+    return;
+  }
+  // Typing is not navigating. A printable key clears the flag so a mouse click
+  // into the field cannot gain a ring just because a letter was typed after it,
+  // which would put the outline back the moment the user starts writing.
+  const typed = event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey;
+  if (typed) delete document.documentElement.dataset.kb;
+}, true);
+
+document.addEventListener('pointerdown', () => {
+  delete document.documentElement.dataset.kb;
+}, true);

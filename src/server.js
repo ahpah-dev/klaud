@@ -15,7 +15,7 @@ const { spawn } = require('child_process');
 const { PUBLIC_DIR, LIMITS, defaultWorkspace } = require('./config');
 const store = require('./store');
 const { runAgentTurn } = require('./agent');
-const { listModels, LLMError } = require('./llm');
+const { listModels, LLMError, configureReasoningEffort } = require('./llm');
 const { TOOLS, toolCatalog, detectShell, runShell, executeTool } = require('./lib/tools');
 const { resolveInside, statOrNull } = require('./lib/fsutil');
 const { getFreeCatalog, setupCloudflare } = require('./providers');
@@ -295,6 +295,9 @@ async function main() {
 
   server.listen(PORT, HOST, async () => {
     const settings = await store.loadSettings();
+    // Hand the saved level to the client, so a hand-edited settings.json takes
+    // effect on the next start without the agent loop having to forward it.
+    configureReasoningEffort(settings.reasoningEffort);
     const shell = detectShell();
 
     console.log('');
@@ -675,6 +678,12 @@ async function handleApi(req, res, url, pathname, { token, activeTurns }) {
     if (!settings.apiKey && !body.allowNoKey) {
       return sendError(res, 400, 'No API key configured. Open Settings and add your OpenAI-compatible key.'), true;
     }
+
+    // The agent loop sends baseUrl, model and temperature to the client but not
+    // the reasoning level, so the client is told once per turn instead of
+    // guessing. Dropping the field for an endpoint that rejects it is handled
+    // in llm.js.
+    configureReasoningEffort(settings.reasoningEffort);
 
     const turnId = body.turnId || store.newId();
     const controller = new AbortController();

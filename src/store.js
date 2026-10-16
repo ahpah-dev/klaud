@@ -40,8 +40,15 @@ async function writeJsonAtomic(file, value) {
 
 const SETTING_KEYS = [
   'baseUrl', 'apiKey', 'model', 'temperature', 'systemPrompt', 'approvalMode',
-  'workspace', 'maxSteps', 'maxContextChars',
+  'workspace', 'maxSteps', 'maxContextChars', 'reasoningEffort',
 ];
+
+/**
+ * The reasoning levels the UI offers. Empty is the unset state and must stay
+ * unset: several endpoints reject the field outright, so an unknown or missing
+ * value has to reach the wire as "no field at all" rather than as a guess.
+ */
+const REASONING_EFFORTS = ['', 'low', 'medium', 'high'];
 
 async function loadSettings() {
   const { settings } = dirs();
@@ -57,6 +64,7 @@ async function loadSettings() {
   merged.temperature = clamp(Number(merged.temperature), 0, 2, DEFAULTS.temperature);
   merged.maxSteps = clamp(Number(merged.maxSteps), 1, 40, 12);
   merged.maxContextChars = clamp(Number(merged.maxContextChars), 8_000, 2_000_000, DEFAULTS.maxContextChars);
+  merged.reasoningEffort = normalizeReasoningEffort(merged.reasoningEffort);
   if (!['auto', 'ask', 'readonly'].includes(merged.approvalMode)) merged.approvalMode = 'auto';
   return merged;
 }
@@ -74,6 +82,7 @@ async function saveSettings(patch) {
   next.temperature = clamp(Number(next.temperature), 0, 2, DEFAULTS.temperature);
   next.maxSteps = clamp(Number(next.maxSteps), 1, 40, 12);
   next.maxContextChars = clamp(Number(next.maxContextChars), 8_000, 2_000_000, DEFAULTS.maxContextChars);
+  next.reasoningEffort = normalizeReasoningEffort(next.reasoningEffort);
   if (!['auto', 'ask', 'readonly'].includes(next.approvalMode)) next.approvalMode = 'auto';
   await writeJsonAtomic(settings, next);
   return next;
@@ -88,6 +97,18 @@ function normalizeBaseUrl(url) {
 function clamp(n, min, max, fallback) {
   if (!Number.isFinite(n)) return fallback;
   return Math.min(max, Math.max(min, n));
+}
+
+/**
+ * Reduce whatever arrived to a level Klaud will put on the wire.
+ *
+ * Junk becomes '' — the unset state — rather than a nearest match. Clamping
+ * "banana" to "low" would silently start sending a parameter the user did not
+ * ask for, and some providers answer an unsupported one with a 400.
+ */
+function normalizeReasoningEffort(value) {
+  const effort = String(value ?? '').trim().toLowerCase();
+  return REASONING_EFFORTS.includes(effort) ? effort : '';
 }
 
 /** Never ship the raw key to the browser. */
@@ -219,6 +240,8 @@ module.exports = {
   saveSettings,
   publicSettings,
   normalizeBaseUrl,
+  normalizeReasoningEffort,
+  REASONING_EFFORTS,
   listChats,
   readChat,
   saveChat,
