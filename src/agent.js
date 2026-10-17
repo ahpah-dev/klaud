@@ -168,6 +168,23 @@ function suggestRecovery(name, output) {
   for (const [pattern, hint] of rules) {
     if (pattern.test(text)) return `${text}\n\n[Klaud] ${hint}`;
   }
+  /* Browser failures have their own shape of "what now", and the generic advice
+   * ("change the arguments") is actively wrong for the most common one: a browser
+   * that is not running cannot be fixed by changing the arguments. */
+  if (name && name.startsWith('browser_')) {
+    if (/no longer running|is not running/i.test(text)) {
+      return `${text}\n\n[Klaud] The browser session is gone, so no argument change will help. Call browser_goto to start a fresh one; the previous page and any login are lost.`;
+    }
+    if (/Cannot find module|did not answer the DevTools|no supported browser/i.test(text)) {
+      return `${text}\n\n[Klaud] This is a problem with the browser install or the tool itself, not with your arguments. Do not retry. Tell the user what is missing and continue without browsing.`;
+    }
+    if (/No element matched|No visible element/i.test(text)) {
+      return `${text}\n\n[Klaud] Nothing on the page matched. Call browser_read to see what is actually there, then target something that exists — element text usually survives a redesign better than a CSS selector.`;
+    }
+    if (/net::ERR_|Could not load/i.test(text)) {
+      return `${text}\n\n[Klaud] The page itself did not load, so nothing about your call was wrong. Check the URL, or fetch_url if the site does not need JavaScript.`;
+    }
+  }
   if (name === 'run_command') {
     return `${text}\n\n[Klaud] Read the output before running this again. If it failed, change the command or fix the cause.`;
   }

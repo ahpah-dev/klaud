@@ -201,6 +201,20 @@ function registerExtensionTools() {
       if (def) defs.push(def);
     } catch { /* reported through collectExtensions */ }
   }
+
+  /* The browser. Registered only when one is actually installed, so a machine
+   * without Chrome does not advertise seven tools that can only fail. It is a
+   * separate subsystem rather than an "extension" in the skill/plugin sense, but
+   * this is the one place that assembles contributed tools, and duplicating that
+   * in agent.js would be a second copy to keep in step. */
+  try {
+    // eslint-disable-next-line global-require
+    const browser = require('./lib/browser/tools');
+    if (browser.browserAvailable()) defs.push(...browser.browserToolDefinitions());
+  } catch {
+    /* No browser subsystem, or it failed to load: the rest of the agent works. */
+  }
+
   const result = registerTools(defs);
   registered = true;
   return result;

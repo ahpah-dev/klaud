@@ -1,6 +1,6 @@
 # Klaud
 
-**v1.1.0** — a local coding agent with a built-in list of **genuinely free, no-card
+**v1.2.0** — a local coding agent with a built-in list of **genuinely free, no-card
 OpenAI-compatible providers**. It reads and writes real files on your machine,
 runs real commands, and verifies its own work — behind a warm, paper-like
 interface.
@@ -189,6 +189,53 @@ leaves the machine, other people see it, and it cannot be taken back*. In **Ask
 first** mode it is confirmed before it goes out; **Read-only** refuses it
 outright. A successful send means Gmail accepted the message for sending — which,
 per Google's own documentation, is not proof it was delivered. Check Sent.
+
+## Browsing
+
+Klaud can drive a real browser. Ask it to look something up, check a deployment,
+fill in a form, or read a page that renders with JavaScript — the kind `fetch_url`
+returns as an empty shell.
+
+It uses **Chrome, Edge, Chromium or Brave**, whichever it finds first, and speaks
+the DevTools protocol over a **pipe** rather than a debug port. Two consequences
+worth knowing: no TCP port is opened, so nothing else on your machine can reach
+the browser while Klaud is driving it; and it works on Node 18, where the
+`WebSocket` that a debug port would need does not exist.
+
+Set `KLAUD_BROWSER` to force a specific executable.
+
+| Tool | Permission | What it does |
+| --- | --- | --- |
+| `browser_goto` | read | Open a page and wait for it to load |
+| `browser_read` | read | The page as clean markdown-ish text, with its links and form fields |
+| `browser_screenshot` | read | Save a PNG into the working directory |
+| `browser_close` | read | Close the browser and discard its session |
+| `browser_click` | **write** | Click by CSS selector or by visible text |
+| `browser_type` | **write** | Type into a field, optionally pressing Enter |
+| `browser_eval` | **exec** | Run one JavaScript expression in the page |
+
+Clicks and typing are dispatched as real CDP input events, not `element.click()`,
+because a framework will not see a DOM-level click and the model would conclude
+the page was broken. Permissions reflect what each action can do: reading a page
+changes nothing of yours, but a click can buy something or post as you, so it is
+confirmed in "Ask first" mode and refused outright in read-only mode.
+
+**Three honest limitations.**
+
+Klaud **cannot see**. Screenshots are saved for you and for the transcript; the
+model's only view of a page is `browser_read`, which is text. A page that renders
+to a canvas is invisible to it.
+
+`file://` is **refused**. Every other tool is confined to the working directory by
+a path check, and a browser pointed at `file:///C:/...` would read any file on the
+machine and hand it back as page text. Blocking the scheme is what keeps that
+boundary real.
+
+The browser runs with a **throwaway profile**, so it holds none of your cookies
+and nothing you are logged into. That is deliberate — it cannot corrupt your real
+profile or leak its sessions — but it also means a site behind a login will not
+work without you handling the sign-in. `browser_close` discards the session
+entirely, and the profile directory with it.
 
 ### The greeting changes with the clock
 
@@ -594,7 +641,7 @@ Everything under `/api/*` needs the `x-klaud-token` header.
 npm test
 ```
 
-1750 checks in total, no test framework, no dependencies. Every suite is
+2003 checks in total, no test framework, no dependencies. Every suite is
 self-contained: they spawn their own servers on throwaway data directories, so
 running the tests can never disturb your real configuration.
 
@@ -618,6 +665,8 @@ running the tests can never disturb your real configuration.
 | `test/e2e-http.js` | 41 | The full HTTP and SSE API, malformed-request resilience, and that the tool catalogue reports every tool before a turn has run |
 | `test/auth-recovery.js` | 21 | A stale session token can be recovered with one click |
 | `test/folder-picker.js` | 30 | Typing a path, creating a folder, switching workspace |
+| `test/browser-extract.js` | 166 | Turning a page into readable text: headings, nested lists, code, tables, boilerplate collapse, truncation, and that a hostile page makes it warn rather than throw |
+| `test/browser-tools.js` | 87 | The browser subsystem against a **real Chrome** and a local site: the URL policy (`file://` refused), the two permission levels, click/type/Enter actually driving the page, screenshot containment, and every failure path explaining itself |
 | `test/browser.js` | 233 | The app driven in headless Chrome, start to finish: no accent ring on a mouse click, the Chat/Cowork toggle and its persisted mode, the diff reader, and **the connections payload not being double-wrapped** while no credential value reaches the browser |
 
 `test/browser.js` is the important one. It launches Chrome, loads the real page,

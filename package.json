@@ -1,6 +1,6 @@
 {
   "name": "klaud",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "A local coding agent with a built-in list of free, no-card OpenAI-compatible providers. Bring your own key, or use none at all.",
   "license": "MIT",
   "author": "Klaud contributors",
@@ -26,7 +26,9 @@
     "subagents",
     "oauth",
     "gmail",
-    "connectors"
+    "connectors",
+    "browser",
+    "chrome-devtools"
   ],
   "main": "src/server.js",
   "type": "commonjs",
@@ -39,7 +41,7 @@
     "dev": "node --watch src/server.js",
     "check-cloudflare": "node tools/check-cloudflare.js",
     "check-nvidia": "node tools/check-nvidia.js",
-    "test": "node test/run.js && node test/markdown.mjs && node test/ui-static.js && node test/skills.js && node test/plugins.js && node test/agents.js && node test/extensions.js && node test/connectors.js && node test/oauth.js && node test/connectors-gmail.js && node test/api-tool.js && node test/cloudflare-token.mjs && node test/cloudflare-setup.js && node test/cloudflare-errors.js && node test/providers.js && node test/e2e-http.js && node test/auth-recovery.js && node test/folder-picker.js && node test/browser.js"
+    "test": "node test/run.js && node test/markdown.mjs && node test/ui-static.js && node test/skills.js && node test/plugins.js && node test/agents.js && node test/extensions.js && node test/connectors.js && node test/oauth.js && node test/connectors-gmail.js && node test/api-tool.js && node test/cloudflare-token.mjs && node test/cloudflare-setup.js && node test/cloudflare-errors.js && node test/providers.js && node test/e2e-http.js && node test/auth-recovery.js && node test/folder-picker.js && node test/browser-extract.js && node test/browser-tools.js && node test/browser.js"
   },
   "dependencies": {}
 }

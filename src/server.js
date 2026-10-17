@@ -345,11 +345,31 @@ async function main() {
         controller.abort();
       } catch { /* ignore */ }
     }
+    /* A browser Klaud started must not outlive the server. It holds a temporary
+     * profile with the user's cookies for whatever they browsed, and an orphaned
+     * Chrome process would keep that alive and invisible. Not awaited: the exit
+     * below cannot wait on it, and `close` is safe to abandon once it has issued
+     * the kill. */
+    try {
+      // eslint-disable-next-line global-require
+      require('./lib/browser/tools').shutdown().catch(() => {});
+    } catch { /* no browser subsystem */ }
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 1_500).unref();
   };
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
+  // `exit` covers a crash path that never reaches a signal handler.
+  process.on('exit', () => {
+    try {
+      const session = require('./lib/browser/session').BrowserSession.peek();
+      if (session) {
+        // Synchronous last resort: close() is async and cannot be awaited here.
+        const { killTree } = require('./lib/tools');
+        killTree(session.connection._child && session.connection._child.pid);
+      }
+    } catch { /* nothing to clean up */ }
+  });
 }
 
 function openBrowser(url) {

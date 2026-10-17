@@ -898,6 +898,7 @@ module.exports = {
   detectShell,
   buildInvocation,
   runShell,
+  killTree,
   lineDiff,
   truncate,
   DEFAULTS,
