@@ -133,8 +133,20 @@ async function waitForHttp(url, timeoutMs = 15000) {
   check('Cloudflare is marked published because its figure is documented',
     cloudflare?.limitBasis === 'published' && /10,000 Neurons/.test(cloudflare.limits), cloudflare?.limits);
   check('local models are marked as having no quota rather than a number',
-    REGISTRY.filter((p) => /localhost|127\.0\.0\.1/.test(p.baseUrl)).every((p) => p.limitBasis === 'no-quota'),
+    // `!p.setup` narrows this to the providers that are genuinely a model server
+    // on this machine. OmniRoute is also loopback, but it is a gateway in front of
+    // metered upstreams, so "nothing is metered" would be a false claim about it —
+    // its limits are whatever the upstreams allow. The old form of this assertion
+    // read "loopback ⇒ no quota", which was true only while every loopback entry
+    // happened to be a local model server.
+    REGISTRY.filter((p) => /localhost|127\.0\.0\.1/.test(p.baseUrl) && !p.setup).every(
+      (p) => p.limitBasis === 'no-quota'
+    ),
     JSON.stringify(REGISTRY.filter((p) => /localhost/.test(p.baseUrl)).map((p) => [p.id, p.limitBasis])));
+  check('a loopback gateway over metered upstreams does not claim to be unmetered', (() => {
+    const gateway = REGISTRY.find((p) => /127\.0\.0\.1/.test(p.baseUrl) && p.setup);
+    return !gateway || gateway.limitBasis !== 'no-quota';
+  })(), JSON.stringify(REGISTRY.filter((p) => p.setup).map((p) => [p.id, p.limitBasis])));
 
   /* ---------------------- per-model limits ---------------------- */
   const groq = REGISTRY.find((p) => p.id === 'groq');

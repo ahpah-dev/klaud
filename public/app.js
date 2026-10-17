@@ -1737,14 +1737,22 @@ function isLocalProvider(provider) {
 }
 
 /**
- * Providers that need more than a key and a URL get a guided setup. Cloudflare
- * requires an account ID inside the URL; the token already knows it, so the user
- * should never have to find and paste a 32-character hex string.
+ * Providers that need more than a key and a URL get a guided setup.
+ *
+ * Cloudflare requires an account ID inside the URL; the token already knows it, so
+ * the user should never have to find and paste a 32-character hex string.
+ *
+ * OmniRoute is the opposite shape: there is no credential at all. It is a gateway
+ * you run on your own machine, so its setup is "is it running, and if not, start
+ * it" — `needsToken: false` switches the panel from collecting a secret to
+ * probing a local service.
  */
 const AUTO_SETUP = {
   cloudflare: {
     label: 'Cloudflare Workers AI',
     tokenUrl: 'https://dash.cloudflare.com/profile/api-tokens',
+    subtitle: 'Two values, no dashboard digging: the API token, and your account ID if you have it.',
+    linkLabel: 'Open the Cloudflare API tokens page',
     steps: [
       'Open the Cloudflare API tokens page and create a token with the <strong>Workers AI</strong> permission.',
       'Paste the <strong>token</strong> below.',
@@ -1752,6 +1760,22 @@ const AUTO_SETUP = {
     ],
     note:
       'Klaud runs a real test request against Workers AI before saving anything, so you will know immediately whether the credentials work. The 10,000 free Neurons/day apply automatically.',
+  },
+  omniroute: {
+    label: 'OmniRoute',
+    accountField: false,
+    tokenPlaceholder: 'paste the API key from localhost:20128',
+    subtitle: 'It runs on your own machine and issues its own key. Klaud finds it, starts it if needed, then checks the key.',
+    linkLabel: 'Open the OmniRoute project page',
+    signupUrl: 'https://github.com/diegosouzapw/OmniRoute',
+    steps: [
+      'OmniRoute is a <strong>local</strong> gateway, not a hosted API. Install it with <code>npm i -g omniroute</code> — it needs Node 22 or newer.',
+      'Run <code>omniroute</code>. It serves a dashboard on <code>localhost:20128</code> and an OpenAI-compatible API on <code>localhost:20128/v1</code>.',
+      'Open <a href="http://localhost:20128" target="_blank" rel="noopener noreferrer">localhost:20128</a> and copy the API key from <strong>Dashboard → Endpoints</strong>, then paste it below.',
+      'Press <strong>Set up</strong>. Klaud starts OmniRoute if it is installed but not running, then sends a real request to prove the key works.',
+    ],
+    note:
+      'Verified on this machine: OmniRoute answers "Authentication required" without a key, so it needs its own key even locally — the key is a free local token, not a paid credential. A first start takes a couple of minutes while it initialises, which is why setup waits. Klaud does not install npm packages without you asking, so the install step is yours.',
   },
 };
 
@@ -1809,9 +1833,15 @@ function renderProviderCard(provider) {
           : '';
   // A provider whose model id was confirmed against a live endpoint gets its own
   // chip: that is a stronger claim than a limit figure, and worth distinguishing.
-  const verifiedChip = provider.verifiedNote
-    ? `<span class="pchip ok" title="${escapeHtml(provider.verifiedNote)}">model verified live</span>`
-    : '';
+  // `verifiedLive: false` suppresses it — OmniRoute documents its model but was not
+  // observed answering, and a chip reading "model verified live" over a note saying
+  // it was not is worse than no chip.
+  const verifiedChip =
+    provider.verifiedNote && provider.verifiedLive !== false
+      ? `<span class="pchip ok" title="${escapeHtml(provider.verifiedNote)}">model verified live</span>`
+      : provider.verifiedNote
+        ? `<span class="pchip approx" title="${escapeHtml(provider.verifiedNote)}">documented, not tested</span>`
+        : '';
   const sourceLink = provider.limitsSource
     ? `<a class="plink" href="${escapeHtml(provider.limitsSource)}" target="_blank" rel="noopener noreferrer">${icon(
         'i-external'
@@ -1885,29 +1915,46 @@ function showAutoSetup(provider, root, done) {
   const panel = document.createElement('div');
   panel.className = 'setup-panel';
   panel.dataset.setup = provider.id;
+  const needsToken = spec.needsToken !== false;
+  const wantsAccount = spec.accountField !== false;
+  const linkUrl = spec.signupUrl || spec.tokenUrl || '';
   panel.innerHTML = `
     <div class="setup-head">
       ${icon('i-zap')}
       <div>
         <strong>${escapeHtml(spec.label)}</strong>
-        <span>Two values, no dashboard digging: the API token, and your account ID if you have it.</span>
+        <span>${escapeHtml(spec.subtitle || '')}</span>
       </div>
     </div>
     <ol class="setup-steps">${spec.steps.map((s) => `<li>${s}</li>`).join('')}</ol>
-    <a class="plink" href="${escapeHtml(spec.tokenUrl)}" target="_blank" rel="noopener noreferrer">
-      ${icon('i-external')} Open the Cloudflare API tokens page
-    </a>
-    <div class="setup-row">
-      <input type="password" data-setup-token placeholder="paste the API token" spellcheck="false" autocomplete="off" />
-    </div>
-    <div data-setup-account>
+    ${
+      linkUrl
+        ? `<a class="plink" href="${escapeHtml(linkUrl)}" target="_blank" rel="noopener noreferrer">
+      ${icon('i-external')} ${escapeHtml(spec.linkLabel || 'Open the provider page')}
+    </a>`
+        : ''
+    }
+    ${
+      needsToken
+        ? `<div class="setup-row">
+      <input type="password" data-setup-token placeholder="${escapeHtml(
+        spec.tokenPlaceholder || 'paste the API token'
+      )}" spellcheck="false" autocomplete="off" />
+    </div>`
+        : ''
+    }
+    ${
+      wantsAccount
+        ? `<div data-setup-account>
       <div class="setup-optional">
         <strong>Account ID</strong> — optional. Klaud reads it from your token. Paste it if you already
         have it handy, or if setup tells you it could not be found. It is in your Cloudflare dashboard
         URL: <code>dash.cloudflare.com/&lt;account-id&gt;</code>
       </div>
       <input type="text" data-setup-account-input placeholder="a1b2c3d4e5f60718293a4b5c6d7e8f90" spellcheck="false" autocomplete="off" />
-    </div>
+    </div>`
+        : ''
+    }
     <div data-setup-status></div>
     <div class="setup-row setup-row-actions">
       <button class="btn btn-primary" data-setup-run>${icon('i-zap')} Set up</button>
@@ -1917,9 +1964,12 @@ function showAutoSetup(provider, root, done) {
 
   root.querySelector(`[data-use-provider="${CSS.escape(provider.id)}"]`)?.closest('.pcard')?.after(panel);
 
+  // No token field for a local service, so focus goes to the button that does the
+  // work rather than to an input that does not exist.
   const input = panel.querySelector('input');
   const status = panel.querySelector('[data-setup-status]');
-  input.focus();
+  if (input) input.focus();
+  else panel.querySelector('[data-setup-run]')?.focus();
 
   const setStatus = (message, kind = '') => {
     status.innerHTML = message
@@ -1930,8 +1980,10 @@ function showAutoSetup(provider, root, done) {
   };
 
   const run = async () => {
-    const token = input.value.trim();
-    if (!token) {
+    const token = input ? input.value.trim() : '';
+    // A token-based provider cannot proceed without one; a local service has no
+    // token to demand, and requiring one would be a dead end.
+    if (needsToken && !token) {
       input.focus();
       return;
     }
@@ -1939,7 +1991,11 @@ function showAutoSetup(provider, root, done) {
     const accountBox = panel.querySelector('[data-setup-account]');
     const accountInput = panel.querySelector('[data-setup-account-input]');
     button.disabled = true;
-    setStatus('Reading the account from your token, then sending a real test request…');
+    setStatus(
+      needsToken
+        ? 'Reading the account from your token, then sending a real test request…'
+        : 'Looking for OmniRoute on this machine, then starting it if it is installed…'
+    );
 
     try {
       const select = root.querySelector(`[data-model-select="${CSS.escape(provider.id)}"]`);
@@ -1947,9 +2003,11 @@ function showAutoSetup(provider, root, done) {
         method: 'POST',
         body: {
           provider: provider.id,
-          apiKey: token,
+          // Absent for a local service: the server must not fall back to the
+          // provider key saved for some unrelated endpoint.
+          ...(needsToken ? { apiKey: token } : {}),
           model: select?.value,
-          accountId: accountInput.value.trim() || undefined,
+          accountId: accountInput ? accountInput.value.trim() || undefined : undefined,
         },
       });
 
@@ -1988,11 +2046,21 @@ function showAutoSetup(provider, root, done) {
 
       setStatus(result.message || 'Setup failed.', 'bad');
 
+      /* A setup that needs something done by hand should hand over the exact
+       * command, not a description of it. Copy-paste beats "install it first". */
+      if (result.command) {
+        panel.querySelector('.setup-command')?.remove();
+        const box = document.createElement('div');
+        box.className = 'setup-command';
+        box.innerHTML = `<code>${escapeHtml(String(result.command))}</code>`;
+        panel.querySelector('[data-setup-status]').after(box);
+      }
+
       // Always offer the manual account ID once anything fails. Discovery cannot
       // work for Cloudflare account-scoped tokens, so hiding this behind one
       // specific failure mode would leave those users stuck.
-      accountBox.hidden = false;
-      if (result.needsAccountId) accountInput.focus();
+      if (accountBox) accountBox.hidden = false;
+      if (result.needsAccountId && accountInput) accountInput.focus();
 
       const detail = result.test?.raw || result.raw || '';
       const meta = [
@@ -2025,13 +2093,15 @@ function showAutoSetup(provider, root, done) {
 
   panel.querySelector('[data-setup-run]').addEventListener('click', run);
   panel.querySelector('[data-setup-cancel]').addEventListener('click', () => panel.remove());
-  input.addEventListener('keydown', (event) => {
-    event.stopPropagation();
-    if (event.key === 'Enter') {
-      event.preventDefault();
-      run();
-    }
-  });
+  if (input) {
+    input.addEventListener('keydown', (event) => {
+      event.stopPropagation();
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        run();
+      }
+    });
+  }
 }
 
 /** Applies a free provider to the live settings and reports what is still needed. */

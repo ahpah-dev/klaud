@@ -509,6 +509,54 @@ async function handleApi(req, res, url, pathname, { token, activeTurns }) {
     const supplied = typeof body.apiKey === 'string' ? body.apiKey.trim() : null;
     const apiKey = supplied === null ? settings.apiKey : supplied;
 
+    /* OmniRoute is a different shape of setup: nothing to paste. It is a gateway
+     * that runs on this machine, so "set up" means find it, start it, and decide
+     * whether the key already saved belongs to it.
+     *
+     * Starting is automatic — that is the whole point of the button. Installing a
+     * global npm package is not: it changes the machine, downloads hundreds of
+     * megabytes and can take minutes, so it happens only when the client asks for
+     * it explicitly with `allowInstall: true`. Otherwise setup answers with the
+     * exact command for the user to run. */
+    if (provider === 'omniroute') {
+      const { setupOmniRoute } = require('./lib/omniroute');
+      let result;
+      try {
+        result = await setupOmniRoute({
+          allowStart: true,
+          allowInstall: body.allowInstall === true,
+          model: body.model,
+          /* Verified against a real OmniRoute on this machine: `/v1/models`
+           * answers 401 "Authentication required" with no key, and a different 401
+           * "Invalid API key" with a wrong one. So it needs its own key even on
+           * loopback, and the key to test is whatever the user just pasted. */
+          storedApiKey: apiKey,
+        });
+      } catch (err) {
+        return sendError(res, 500, err?.message || String(err)), true;
+      }
+
+      if (result.ok) {
+        const patch = { baseUrl: result.baseUrl, model: result.model || 'auto' };
+        /* Only persist a key the user actually supplied in this request. The
+         * stored one is already on disk, and re-saving it would not help. */
+        if (supplied !== null) patch.apiKey = apiKey;
+        const saved = await store.saveSettings(patch);
+        result.settings = store.publicSettings(saved);
+        console.log(
+          `  \x1b[36mconfigured\x1b[0m OmniRoute at ${result.baseUrl} (model ${result.model || 'auto'})`
+        );
+      } else if (result.stage === 'auth') {
+        /* The most common first attempt: OmniRoute is up, but Klaud has no key for
+         * it yet. Say exactly where the key lives rather than "authentication
+         * failed", which reads like the endpoint is broken. */
+        result.hint =
+          'Open http://localhost:20128 in a browser, then Dashboard → Endpoints, copy the API key, and paste it above.';
+      }
+      result.provider = 'omniroute';
+      return sendJson(res, 200, result), true;
+    }
+
     if (provider !== 'cloudflare') {
       return sendError(res, 400, `No automatic setup for "${provider || 'that provider'}". Paste its key in Settings instead.`), true;
     }

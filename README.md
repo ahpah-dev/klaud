@@ -1,6 +1,6 @@
 # Klaud
 
-**v1.3.0** — a local coding agent with a built-in list of **genuinely free, no-card
+**v1.4.0** — a local coding agent with a built-in list of **genuinely free, no-card
 OpenAI-compatible providers**. It reads and writes real files on your machine,
 runs real commands, and verifies its own work — behind a warm, paper-like
 interface.
@@ -127,6 +127,33 @@ A subagent that stops without producing an answer is reported to Klaud as a
 failure with the reason, not as a success with no text — otherwise the main model
 relays a blank as though it were a result.
 
+### Skills that ship with Klaud
+
+Five arrive with the app, so a fresh install has something to type `/` for:
+
+| Skill | What it does |
+| --- | --- |
+| `/browser` | Drive a real page — open, read, click, type, wait for slow content — and know when `fetch_url` is the better tool |
+| `/computer-use` | Operate the Windows desktop through PowerShell: screenshot, list windows, focus one, move the mouse, type, press keys |
+| `/code-review` | Review a change for defects: find the diff, read the touched files, report `path:line` |
+| `/debug-failing-test` | Reproduce a failure, read it, minimise it, one hypothesis per change |
+| `/web-research` | Answer from the web with sources you can point at, separating what a source says from what you inferred |
+
+They are ordinary skills in every respect — same frontmatter, same `/name`
+invocation, same skill menu — and they are **lowest precedence**, so your own skill
+of the same name replaces one without deleting anything:
+
+```
+project  >  personal  >  bundled
+```
+
+`/computer-use` is worth a special word: it is the most dangerous thing here.
+A click lands on whatever window is at those pixels and there is no undo, so it
+targets the Windows desktop only, states exactly which parts were verified on which
+Windows build, and says plainly that input arriving through Klaud's own
+console-less shell is unconfirmed — confirm the effect in the app rather than
+trusting a return value.
+
 ### Where extensions live
 
 `GET /api/extensions` reports what is actually loaded, and the paths are:
@@ -136,6 +163,10 @@ relays a blank as though it were a result.
 | Skills | `~/.klaud/skills/` | `<workspace>/.klaud/skills/` |
 | Plugins | `~/.klaud/plugins/` | `<workspace>/.klaud/plugins/` |
 | Subagents | `~/.klaud/agents/` | `<workspace>/.klaud/agents/` |
+
+The bundled skills live inside the app (`src/lib/skills-bundled/`), and
+`KLAUD_BUNDLED_SKILLS_DIR` repoints them — which is how the test suites keep their
+own fixtures isolated instead of asserting against whatever ships.
 
 Everything is read from disk on each turn, so a skill added while Klaud is
 running is picked up on your next message — no restart.
@@ -402,6 +433,40 @@ account ID — a 32-character hex string. Klaud tries to save you the trip:
 If it still refuses, `npm run check-cloudflare` tells you which of the two values
 is wrong.
 
+### OmniRoute: a free gateway on your own machine
+
+[OmniRoute](https://github.com/diegosouzapw/OmniRoute) is MIT-licensed and runs
+locally, routing across many providers' free tiers behind one OpenAI-compatible
+endpoint. Klaud sets it up for you:
+
+```
+npm i -g omniroute        # needs Node 22 or newer
+omniroute                 # dashboard and API on the same port
+```
+
+Then **Free → OmniRoute → Set up automatically**. Klaud looks for it on
+`127.0.0.1:20128`, starts it if it is installed but not running, and sends a real
+request to prove the key works before saving anything. It will not install a global
+npm package on its own — that changes your machine, so the install step stays yours
+and Klaud hands you the exact command instead.
+
+Three things measured on this machine rather than read in its README:
+
+1. **It needs its own API key even on loopback.** `/v1/models` answers
+   `401 Authentication required` with no key, and a *different* `401 Invalid API key`
+   with a wrong one. The key is a free local token from its dashboard
+   (Dashboard → Endpoints), not a paid credential — but it is not the keyless
+   provider its README implies.
+2. **A first start takes about two and a half minutes** before the port answers, so
+   setup waits rather than calling that a failure.
+3. **What it gives you is whatever the upstreams allow.** `tier: generous` here means
+   many free tiers behind a local gateway, not a quota OmniRoute grants, and it moves
+   when an upstream changes its terms.
+
+Not verified: whether its `auto` alias resolves, whether it accepts tool calls, and
+whether a keyless chat request works. Its card says "documented, not tested" rather
+than "model verified live" for exactly that reason.
+
 ### Any other endpoint
 
 Anything speaking `POST {baseUrl}/chat/completions` with SSE and tool calls
@@ -413,6 +478,7 @@ the paid ones:
 | NVIDIA NIM · free | `https://integrate.api.nvidia.com/v1` |
 | Groq · free | `https://api.groq.com/openai/v1` |
 | Google AI Studio · free | `https://generativelanguage.googleapis.com/v1beta/openai` |
+| OmniRoute · free, local | `http://127.0.0.1:20128/v1` — set up from the app |
 | OpenRouter | `https://openrouter.ai/api/v1` |
 | Ollama · local | `http://localhost:11434/v1` |
 | LM Studio · local | `http://localhost:1234/v1` |
@@ -658,7 +724,7 @@ Everything under `/api/*` needs the `x-klaud-token` header.
 npm test
 ```
 
-2038 checks in total, no test framework, no dependencies. Every suite is
+2178 checks in total, no test framework, no dependencies. Every suite is
 self-contained: they spawn their own servers on throwaway data directories, so
 running the tests can never disturb your real configuration.
 
@@ -668,6 +734,7 @@ running the tests can never disturb your real configuration.
 | `test/markdown.mjs` | 107 | Markdown rendering and HTML escaping, including table cells, nested lists, ordered-list starts, `<hr>`, and a 10-shape XSS battery through every hard path |
 | `test/ui-static.js` | 38 | Element ids, icon sprite, CSS coverage, module wiring, working-indicator animations |
 | `test/skills.js` | 70 | Frontmatter parsing, discovery, shadowing, the slash-command parser, and that a skill body is wrapped as untrusted |
+| `test/bundled-skills.js` | 18 | The five shipped skills: discovered as `bundled`, project and personal both beat them, `/name` works, and **every tool name mentioned in every skill body exists in the real catalogue** — the check that stops a skill drifting as tools change |
 | `test/plugins.js` | 124 | Manifests, optional manifests, path containment against `../` and symlink escapes, dependencies, and that hooks and MCP are reported as unimplemented |
 | `test/agents.js` | 143 | Subagent definitions, all three `tools` shapes, shadowing, and the `task` shim's behaviour with and without a runner |
 | `test/extensions.js` | 72 | The joins: a skill reaching a real request, **a subagent not being offered the `task` tool**, **a subagent's own writes being approved rather than slipping through**, honest reporting of an answerless subagent, and a malformed plugin degrading to a warning |
@@ -678,7 +745,8 @@ running the tests can never disturb your real configuration.
 | `test/cloudflare-token.mjs` | 16 | Account IDs are read from every token claim shape, and never guessed |
 | `test/cloudflare-setup.js` | 42 | The setup path against a stand-in Cloudflare API, including empty account lists |
 | `test/cloudflare-errors.js` | 51 | Every Cloudflare failure explains itself; a bare "unknown" is impossible |
-| `test/providers.js` | 79 | Catalogue honesty, the NVIDIA recommendation, live lookups, no silent config changes |
+| `test/providers.js` | 80 | Catalogue honesty, the NVIDIA recommendation, live lookups, no silent config changes, and that a loopback gateway over metered upstreams never claims to be unmetered |
+| `test/omniroute.js` | 121 | Detecting, starting and installing a local gateway against a mock: a refused connection as a normal "not running", the Node floor refusing to start, no install without consent, and the stored-key decision across its three branches |
 | `test/e2e-http.js` | 41 | The full HTTP and SSE API, malformed-request resilience, and that the tool catalogue reports every tool before a turn has run |
 | `test/auth-recovery.js` | 21 | A stale session token can be recovered with one click |
 | `test/folder-picker.js` | 30 | Typing a path, creating a folder, switching workspace |

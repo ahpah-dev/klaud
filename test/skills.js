@@ -20,6 +20,19 @@ const path = require('path');
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'klaud-skills-'));
 process.env.KLAUD_DATA_DIR = path.join(TMP, 'dot-klaud');
 
+/**
+ * Point the *bundled* source at an empty directory too.
+ *
+ * This suite tests the loader against fixtures it controls, and it asserts exact
+ * listing contents — so a third source that ships with Klaud would turn every one
+ * of those assertions into "plus whatever is currently bundled", which is a test
+ * that breaks whenever a skill is added rather than when the loader breaks.
+ * The bundled source has its own suite (`test/bundled-skills.js`); here it is
+ * deliberately empty, exactly as the personal and project roots are.
+ */
+const EMPTY_BUNDLED = fs.mkdtempSync(path.join(os.tmpdir(), 'klaud-skills-nobundled-'));
+process.env.KLAUD_BUNDLED_SKILLS_DIR = EMPTY_BUNDLED;
+
 // The root the real machine would use. This suite never writes there — it exists
 // so one check below can prove the redirect actually took effect.
 const REAL_PERSONAL_ROOT = path.join(os.homedir(), '.klaud', 'skills');

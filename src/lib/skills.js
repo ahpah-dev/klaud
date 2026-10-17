@@ -5,6 +5,14 @@
  *
  *   ~/.klaud/skills/<name>/SKILL.md           personal, every workspace
  *   <workspace>/.klaud/skills/<name>/SKILL.md project, that workspace only
+ *   skills-bundled/<name>/SKILL.md            bundled, ships with Klaud
+ *
+ * Precedence is project > personal > bundled. The shipped skills are the floor,
+ * not the ceiling: they are ordinary skill directories next to this file, so a
+ * user overrides one by writing a skill of the same name in their own directory
+ * and deleting nothing. A bundled skill is read, validated, substituted and
+ * wrapped exactly like any other - `source` is metadata for the listing, and no
+ * code path treats it specially.
  *
  * A SKILL.md is YAML frontmatter between `---` markers followed by a markdown
  * body. There is no dependency available, so the frontmatter is parsed by the
@@ -289,15 +297,33 @@ function projectSkillsDir(cwd) {
 }
 
 /**
- * Where skills live: the workspace first, then the personal directory. Project
- * first matters because the resolver lets project skills shadow personal ones.
+ * The skills that ship with Klaud, resolved from this file's own directory so
+ * they travel with the source however it was installed or copied.
+ *
+ * `KLAUD_BUNDLED_SKILLS_DIR` is the same escape hatch `KLAUD_DATA_DIR` offers:
+ * a packaged build, or a test that wants to see the "nothing bundled" case, can
+ * point it elsewhere. A path that does not exist is simply no bundled skills.
+ */
+function bundledSkillsDir() {
+  const override = process.env.KLAUD_BUNDLED_SKILLS_DIR;
+  if (override) return path.resolve(override);
+  return path.join(__dirname, 'skills-bundled');
+}
+
+/**
+ * Every source, in precedence order: strongest first. That order is what the
+ * scan visits and what the merge below ranks on, so the two can never disagree.
  */
 function skillDirectories(cwd) {
   return [
     { dir: projectSkillsDir(cwd), source: 'project' },
     { dir: personalSkillsDir(), source: 'personal' },
+    { dir: bundledSkillsDir(), source: 'bundled' },
   ];
 }
+
+/** Higher wins. Kept next to the list above so a new source is one edit. */
+const SOURCE_RANK = { project: 3, personal: 2, bundled: 1 };
 
 /**
  * Remove the smallest indent shared by every non-empty line. A file that was
@@ -508,13 +534,18 @@ let cache = null;
 
 /**
  * Every skill on disk, validated, sorted by name, with the shadowing already
- * applied. Cached for one (workspace, personal root) pair because the listing is
- * built on every turn; clearSkillCache() drops it after anything writes a file.
+ * applied. Cached for one (workspace, personal root, bundled root) triple because
+ * the listing is built on every turn; clearSkillCache() drops it after anything
+ * writes a file.
+ *
+ * The bundled root is in the key because it is now part of the answer: repointing
+ * KLAUD_BUNDLED_SKILLS_DIR must not keep serving the previous scan.
  */
 function resolveAll(cwd) {
   const workspace = path.resolve(cwd || process.cwd());
   const personalRoot = personalSkillsDir();
-  const key = `${workspace}\u0000${personalRoot}`;
+  const bundledRoot = bundledSkillsDir();
+  const key = `${workspace}\u0000${personalRoot}\u0000${bundledRoot}`;
 
   if (cache && cache.key === key) return cache.skills;
 
@@ -533,15 +564,15 @@ function resolveAll(cwd) {
     }
   }
 
-  // Project skills shadow personal ones of the same name: the workspace's own
-  // instructions win for that workspace, and the winning entry says a personal
-  // copy exists so the shadowing is not a silent surprise. The comparison is on
-  // `source` rather than on the order the directories came back in, so the result
-  // does not depend on the scan order. An invalid entry has no name to shadow, so
-  // it is tracked by key and kept.
+  // A skill shadows the copies of its own name that rank below it: the workspace's
+  // own instructions win there, then the user's, and a bundled skill is the floor.
+  // The winner says what it covered up, so overriding a shipped skill is visible
+  // rather than silent. Ranking on SOURCE_RANK rather than on the scan order means
+  // the answer does not depend on which directory happened to be read first. An
+  // invalid entry has no name to shadow, so it is tracked by key and kept.
   const byName = new Map();
   const withInvalidName = new Map();
-  const shadowCount = new Map();
+  const shadowedSources = new Map();
   for (const skill of found) {
     if (skill.name === null) {
       withInvalidName.set(skill.key, skill);
@@ -552,23 +583,21 @@ function resolveAll(cwd) {
       byName.set(skill.name, skill);
       continue;
     }
-    // `existing` loses only when the incoming copy is a project one.
-    if (skill.source === 'project' && existing.source !== 'project') {
-      byName.set(skill.name, skill);
-      shadowCount.set(skill.name, (shadowCount.get(skill.name) || 0) + 1);
-      continue;
-    }
-    if (skill.source === 'personal' && existing.source === 'project') {
-      shadowCount.set(skill.name, (shadowCount.get(skill.name) || 0) + 1);
-    }
+    const incomingWins = SOURCE_RANK[skill.source] > SOURCE_RANK[existing.source];
+    const winner = incomingWins ? skill : existing;
+    const loser = incomingWins ? existing : skill;
+    byName.set(skill.name, winner);
+    if (!shadowedSources.has(skill.name)) shadowedSources.set(skill.name, new Set());
+    shadowedSources.get(skill.name).add(loser.source);
   }
   for (const skill of byName.values()) {
-    const count = shadowCount.get(skill.name) || 0;
-    if (count && skill.source === 'project') {
-      skill.warnings.push(
-        `shadowed ${count} personal skill${count === 1 ? '' : 's'} of the same name in this workspace`
-      );
-    }
+    const under = shadowedSources.get(skill.name);
+    if (!under || !under.size) continue;
+    // "the bundled skill", "the bundled and personal skills": naming the sources
+    // is the difference between a useful warning and a puzzle.
+    const sources = [...under].sort();
+    const what = sources.length === 1 ? `the ${sources[0]} skill` : `the ${sources.join(' and ')} skills`;
+    skill.warnings.push(`shadowed ${what} of the same name (lower precedence in this workspace)`);
   }
 
   const resolved = [...byName.values(), ...withInvalidName.values()];
@@ -732,7 +761,8 @@ function readSkill(name, cwd) {
       ? `did you mean: ${suggestion}?`
       : known.length
         ? `available skills: ${known.join(', ')}`
-        : `no skills are installed. Directories checked: ${projectSkillsDir(cwd)} and ${personalSkillsDir()}`;
+        : `no skills are installed. Directories checked: ${projectSkillsDir(cwd)}, ` +
+          `${personalSkillsDir()} and ${bundledSkillsDir()}`;
     return { ok: false, error: `no skill named "${wanted}". ${hint} Call list_skills to see what is available.` };
   }
 
@@ -845,7 +875,8 @@ function listSkillsOutput(cwd) {
   if (!skills.length) {
     return (
       `No skills found. Personal skills live in ${personalSkillsDir()}${path.sep}<name>${path.sep}${SKILL_FILE}; ` +
-      `project skills in ${projectSkillsDir(cwd)}${path.sep}<name>${path.sep}${SKILL_FILE}.`
+      `project skills in ${projectSkillsDir(cwd)}${path.sep}<name>${path.sep}${SKILL_FILE}; ` +
+      `bundled skills in ${bundledSkillsDir()}${path.sep}<name>${path.sep}${SKILL_FILE}.`
     );
   }
 
@@ -868,7 +899,7 @@ function listSkillsOutput(cwd) {
   if (broken.length) {
     parts.push(`\nNot loadable (invalid skill name):\n${broken.map(detailFor).join('\n')}`);
   }
-  parts.push('\nProject skills shadow personal ones of the same name.');
+  parts.push('\nProject skills shadow personal ones, and personal ones shadow bundled ones, of the same name.');
   return parts.join('\n');
 }
 
@@ -879,7 +910,8 @@ function skillToolDefinitions() {
       permission: 'read',
       description:
         'List the skills available in this workspace: user-authored instruction files, each in its own ' +
-        'directory with a SKILL.md. Project skills live in .klaud/skills, personal ones in ~/.klaud/skills. ' +
+        'directory with a SKILL.md. Project skills live in .klaud/skills, personal ones in ~/.klaud/skills, ' +
+        'and a set of bundled skills ships with Klaud. ' +
         'Use this when a task might match a skill you have not loaded yet.',
       parameters: {
         type: 'object',
@@ -947,6 +979,7 @@ module.exports = {
   clearSkillCache,
   personalSkillsDir,
   projectSkillsDir,
+  bundledSkillsDir,
   parseFrontmatter,
   suggestName,
 };

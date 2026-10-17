@@ -38,6 +38,30 @@
  *                     account), or measures in tokens/credits instead.
  */
 
+/**
+ * `setup` marks a provider that cannot be configured by pasting a key at all: it
+ * has to be installed and run on this machine first, so the UI offers a setup
+ * button instead of an API key field.
+ *   'omniroute' — a local gateway Klaud can install and start, which additionally
+ *                 needs Node 22.22.2+ even though Klaud itself runs on Node 18.
+ *                 The exact range lives in `requiresNode`, imported from
+ *                 src/lib/omniroute.js so the catalogue and the code that
+ *                 enforces it cannot disagree.
+ * Entries without `setup` are configured from a key and a URL, as before.
+ */
+
+/**
+ * `verifiedLive` distinguishes "the model id was confirmed against a live
+ * endpoint" from "the project documents it but nobody ran it here". The card
+ * styles a chip from `verifiedNote`, and OmniRoute's note is the second kind, so
+ * the flag is what that chip should key on.
+ */
+
+// The engine range is enforced by src/lib/omniroute.js, so it is quoted from
+// there rather than restated: a stale copy in the catalogue would tell the user
+// their Node is fine when the setup path refuses it.
+const { NODE_REQUIREMENT } = require('./lib/omniroute');
+
 const CHECKED = '2026-10';
 
 /** Ordering weight only — never rendered as a number. */
@@ -110,6 +134,44 @@ const REGISTRY = [
     limitBasis: 'no-quota',
     exact: true,
     verified: CHECKED,
+  },
+  {
+    id: 'omniroute',
+    name: 'OmniRoute (on this machine)',
+    // The loopback literal, never `localhost`: on a machine that resolves
+    // localhost to ::1 first, the check would miss an IPv4-only listener and
+    // report "not running" for a healthy install.
+    baseUrl: 'http://127.0.0.1:20128/v1',
+    model: 'auto',
+    signupUrl: 'https://github.com/diegosouzapw/OmniRoute',
+    limitsSource: 'https://github.com/diegosouzapw/OmniRoute',
+    toolCalling: true,
+    tier: 'generous',
+    // Ordering weight only. It is a router in front of many free tiers rather
+    // than one provider's quota, so it sorts below the two local servers and
+    // above any single hosted free tier.
+    estimateRank: 10000,
+    // Not a key to paste: this one has to be installed and run here first.
+    setup: 'omniroute',
+    requiresNode: NODE_REQUIREMENT,
+    headline: 'Free — a local gateway over many free tiers, with its own local key',
+    tagline: 'Install once, then let "auto" pick an upstream',
+    detail:
+      'Not a hosted API. You install OmniRoute yourself (`npm install -g omniroute`, then `omniroute`) and it serves an OpenAI-compatible API on http://127.0.0.1:20128/v1 beside a dashboard on the same port. Its README advertises a keyless `auto` alias backed by a keyless upstream, but that is not what the running build does for model listing: `/v1/models` answers `401 Authentication required`. It issues its own Bearer keys from Dashboard → Endpoints, and those are free, local tokens rather than paid credentials. It routes across many upstream free tiers, so "free" here means free tiers behind a local gateway, not a quota OmniRoute grants.',
+    limits:
+      'Not published, because there is nothing of its own to publish: OmniRoute puts no rate limit on local use and meters nothing. What you actually get is whatever the upstream free tiers it routes to allow — figures that differ per provider, per model and per key, and that OmniRoute does not document. Read this as "whatever they allow", not as a quota OmniRoute grants.',
+    limitBasis: 'not-published',
+    caveat:
+      'Weigh four things first. It needs Node 22.22.2 or newer ("' + NODE_REQUIREMENT + '", so 23.x is excluded), which means it cannot run on the Node 18 host Klaud still supports — run Klaud on 22+, or put OmniRoute in Docker. It needs its own API key even on loopback, so it is not the keyless provider its README implies; Klaud links straight to the page that issues one. A first start took about two and a half minutes here before the port answered, so setup waits rather than declaring failure. And the "generous" tier here is its routing over other providers\' free tiers rather than an allowance OmniRoute provides, so it moves when an upstream changes its terms — the upstream also sees your prompts, and since Klaud reads your files, that text travels through OmniRoute to whichever provider its router picks, under that provider\'s retention terms.',
+    verified: CHECKED,
+    // Documents a claim, not a measurement: see verifiedNote. The card's
+    // "model verified live" chip should key on this rather than on the mere
+    // presence of a note.
+    verifiedLive: false,
+    verifiedNote:
+      'Partly measured on this machine, partly from its README. Measured: OmniRoute was installed and running here, `GET /v1/models` answered `401 Authentication required` with no key and a different `401 Invalid API key` with a wrong one, and a first start took roughly 150 seconds before the port answered. Taken from its own README: the MIT licence, the npm and Docker packages, the http://localhost:20128/v1 surface, the `auto` alias, and the Node engine range. NOT observed: any successful completion, whether `auto` resolves, whether it accepts tool calls, and whether a keyless `auto` request works — an unauthenticated chat completion neither answered nor rejected within 20 seconds. So `toolCalling: true` remains a documentation claim, not a measurement.',
+    verifyHint:
+      'With it running and its own key in hand, `curl -H "Authorization: Bearer <key>" http://127.0.0.1:20128/v1/models` lists what it will serve. Free → OmniRoute → Set up automatically starts it if needed, then proves the key with a real request before saving anything.',
   },
   {
     id: 'groq',
