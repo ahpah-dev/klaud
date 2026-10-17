@@ -122,7 +122,21 @@
 
       <div class="composer-wrap">
         <div class="composer">
-          <textarea id="prompt" rows="1" placeholder="Type for skills" autocomplete="off" spellcheck="true"></textarea>
+          <!-- Skills, offered as you type "/" — the same discovery path Claude has.
+               A listbox rather than a div: the arrow keys move a real selection and
+               screen readers announce it. -->
+          <div class="skill-menu" id="skill-menu" role="listbox" aria-label="Skills" hidden></div>
+          <div class="prompt-field">
+            <textarea id="prompt" rows="1" aria-label="Message Klaud" autocomplete="off" spellcheck="true"></textarea>
+            <!-- The hint is an overlay, not the textarea's `placeholder` attribute:
+                 an attribute cannot crossfade, and the two lines have to overlap
+                 during the transition. `aria-hidden` because the textarea already
+                 carries an accessible label; announcing both would say it twice. -->
+            <div class="prompt-hint" id="prompt-hint" aria-hidden="true">
+              <span class="hint-line is-on">Type / for skills</span>
+              <span class="hint-line">How can I help you today?</span>
+            </div>
+          </div>
           <div class="composer-row">
             <!-- Chat and Cowork share this one composer, so the mode is a small
                  segmented control sitting with the other chips rather than a

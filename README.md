@@ -1,6 +1,6 @@
 # Klaud
 
-**v1.2.0** — a local coding agent with a built-in list of **genuinely free, no-card
+**v1.3.0** — a local coding agent with a built-in list of **genuinely free, no-card
 OpenAI-compatible providers**. It reads and writes real files on your machine,
 runs real commands, and verifies its own work — behind a warm, paper-like
 interface.
@@ -21,6 +21,23 @@ A skill is a procedure you write once and Klaud loads when it is relevant, or
 when you ask for it by name with `/skill-name`. Unlike a system prompt, a skill's
 body is only read when it is used, so a long checklist costs nothing until you
 need it.
+
+Type **`/` in the prompt** and the skills you have installed appear above the
+composer, filtered as you type — arrow keys move, Enter or Tab inserts, Escape
+dismisses. The list is read from the same directories the agent reads, so the menu
+cannot offer a skill Klaud would not find, and a query that matches nothing says
+so instead of showing an empty box.
+
+![The skill menu, opened by typing a slash](docs/screenshots/screenshot-skill-menu.png)
+
+The prompt's own hint rotates every fifteen seconds between **Type / for skills**
+and **How can I help you today?**, crossfading between them. It is an overlay
+rather than the textarea's `placeholder` attribute, because an attribute holds a
+single string and cannot animate; both lines sit in the layout the whole time and
+only their opacity changes. It hides the moment you type, and the timer stops with
+it.
+
+![The prompt hint](docs/screenshots/screenshot-prompt-hint.png)
 
 ```
 ~/.klaud/skills/<name>/SKILL.md            personal, every project
@@ -641,7 +658,7 @@ Everything under `/api/*` needs the `x-klaud-token` header.
 npm test
 ```
 
-2003 checks in total, no test framework, no dependencies. Every suite is
+2038 checks in total, no test framework, no dependencies. Every suite is
 self-contained: they spawn their own servers on throwaway data directories, so
 running the tests can never disturb your real configuration.
 
@@ -667,7 +684,7 @@ running the tests can never disturb your real configuration.
 | `test/folder-picker.js` | 30 | Typing a path, creating a folder, switching workspace |
 | `test/browser-extract.js` | 166 | Turning a page into readable text: headings, nested lists, code, tables, boilerplate collapse, truncation, and that a hostile page makes it warn rather than throw |
 | `test/browser-tools.js` | 87 | The browser subsystem against a **real Chrome** and a local site: the URL policy (`file://` refused), the two permission levels, click/type/Enter actually driving the page, screenshot containment, and every failure path explaining itself |
-| `test/browser.js` | 233 | The app driven in headless Chrome, start to finish: no accent ring on a mouse click, the Chat/Cowork toggle and its persisted mode, the diff reader, and **the connections payload not being double-wrapped** while no credential value reaches the browser |
+| `test/browser.js` | 268 | The app driven in headless Chrome, start to finish: no accent ring on a mouse click, the Chat/Cowork toggle and its persisted mode, the diff reader, the connections payload not being double-wrapped, and **the prompt hint and skill menu** — including that the crossfade is two overlaid lines rather than a text swap |
 
 `test/browser.js` is the important one. It launches Chrome, loads the real page,
 and fails on any uncaught exception or console error. It then types a message,

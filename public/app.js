@@ -1176,6 +1176,9 @@ async function submit() {
 
   dom.prompt.value = '';
   autosize();
+  // The field is empty again, so the hint comes back and the menu goes away.
+  syncPromptHint();
+  closeSkillMenu();
   state.usage = null;
   state.toolCount = 0;
 
@@ -3174,6 +3177,187 @@ function openFileBrowser(startPath, onPick) {
  * Composer
  * ------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------ *
+ * The prompt hint and the skill menu
+ * ------------------------------------------------------------------ */
+
+/**
+ * The placeholder is two lines that crossfade on a timer.
+ *
+ * It cannot be the textarea's `placeholder` attribute: an attribute holds one
+ * string and cannot animate, and a crossfade needs both lines present at once.
+ * So it is an overlay under the text, hidden the moment there is anything to
+ * read, and switched off while the field is disabled.
+ */
+const HINT_ROTATE_MS = 15_000;
+
+let hintIndex = 0;
+let hintTimer = null;
+
+function showHint(index) {
+  const hint = el('prompt-hint');
+  if (!hint) return;
+  const lines = hint.querySelectorAll('.hint-line');
+  if (!lines.length) return;
+  hintIndex = ((index % lines.length) + lines.length) % lines.length;
+  lines.forEach((line, i) => line.classList.toggle('is-on', i === hintIndex));
+}
+
+function startHintRotation() {
+  if (hintTimer !== null) return;
+  hintTimer = setInterval(() => {
+    /* A background tab has nobody reading it. Skipping the tick keeps the two
+       lines on the schedule the user actually saw, instead of cycling through
+       them unobserved and landing on a different one when they come back. */
+    if (document.hidden) return;
+    showHint(hintIndex + 1);
+  }, HINT_ROTATE_MS);
+}
+
+function stopHintRotation() {
+  if (hintTimer === null) return;
+  clearInterval(hintTimer);
+  hintTimer = null;
+}
+
+/** Keep the overlay in step with the field: visible only while it is empty. */
+function syncPromptHint() {
+  const hint = el('prompt-hint');
+  if (!hint) return;
+  const passthrough = Boolean(dom.prompt.disabled);
+  const empty = dom.prompt.value.length === 0;
+  hint.classList.toggle('is-off', !empty || passthrough);
+  if (empty && !passthrough) startHintRotation();
+  else stopHintRotation();
+}
+
+/* ---------------------------- the skill menu ---------------------------- */
+
+/**
+ * Typing "/" offers the skills available in this workspace.
+ *
+ * The list comes from `/api/extensions`, which reads the same directories the
+ * agent reads — so the menu cannot promise a skill the model would not find.
+ * Fetched once and cached: a skill added mid-session shows up on reload, and
+ * re-fetching on every keystroke would be a request per character.
+ */
+let skillCache = null;
+let skillMenuItems = [];
+let skillMenuIndex = 0;
+
+async function skillsForMenu() {
+  if (skillCache) return skillCache;
+  try {
+    const data = await api('/api/extensions');
+    skillCache = Array.isArray(data.skills) ? data.skills : [];
+  } catch {
+    // A failed read is reported by the empty state, not by throwing into the
+    // keystroke handler.
+    skillCache = [];
+  }
+  return skillCache;
+}
+
+/** The `/word` being typed, or null when the field is not in slash mode. */
+function slashQuery() {
+  const value = dom.prompt.value;
+  if (!value.startsWith('/')) return null;
+  // A space means arguments have begun, which is also when the menu should get
+  // out of the way rather than covering the text being written.
+  const match = value.match(/^\/([a-z0-9_-]*)$/i);
+  return match ? match[1].toLowerCase() : null;
+}
+
+function skillMenuOpen() {
+  const menu = el('skill-menu');
+  return Boolean(menu && !menu.hidden);
+}
+
+function closeSkillMenu() {
+  const menu = el('skill-menu');
+  if (!menu || menu.hidden) return;
+  menu.hidden = true;
+  menu.replaceChildren();
+  skillMenuItems = [];
+  skillMenuIndex = 0;
+  dom.prompt.removeAttribute('aria-activedescendant');
+}
+
+function paintSkillMenu() {
+  const menu = el('skill-menu');
+  if (!menu) return;
+  const items = skillMenuItems;
+  menu.innerHTML = items
+    .map(
+      (skill, i) => `<button type="button" class="skill-item" role="option" id="skill-opt-${i}"
+        data-skill="${escapeHtml(skill.name)}" aria-selected="${i === skillMenuIndex}">
+        <span class="skill-name">/${escapeHtml(skill.name)}</span>
+        <span class="skill-desc">${escapeHtml(skill.description || '')}</span>
+        ${skill.modelInvocable === false ? '<span class="skill-flag">manual</span>' : ''}
+      </button>`
+    )
+    .join('');
+  dom.prompt.setAttribute('aria-activedescendant', `skill-opt-${skillMenuIndex}`);
+}
+
+function showSkillEmpty(query) {
+  const menu = el('skill-menu');
+  if (!menu) return;
+  skillMenuItems = [];
+  skillMenuIndex = 0;
+  menu.innerHTML = query
+    ? `<div class="skill-empty">No skill matches <code>/${escapeHtml(query)}</code>.</div>`
+    : `<div class="skill-empty">No skills are installed yet. Add one as
+         <code>~/.klaud/skills/&lt;name&gt;/SKILL.md</code>, or
+         <code>.klaud/skills/&lt;name&gt;/SKILL.md</code> in this workspace.</div>`;
+  menu.hidden = false;
+  dom.prompt.removeAttribute('aria-activedescendant');
+}
+
+async function refreshSkillMenu() {
+  const query = slashQuery();
+  if (query === null) {
+    closeSkillMenu();
+    return;
+  }
+  const skills = await skillsForMenu();
+  // The field may have moved on while the fetch was in flight.
+  if (slashQuery() !== query) return;
+
+  if (!skills.length) {
+    showSkillEmpty(query);
+    return;
+  }
+  const matches = skills.filter((skill) => skill.name.toLowerCase().includes(query)).slice(0, 8);
+  if (!matches.length) {
+    showSkillEmpty(query);
+    return;
+  }
+  skillMenuItems = matches;
+  skillMenuIndex = 0;
+  const menu = el('skill-menu');
+  if (!menu) return;
+  menu.hidden = false;
+  paintSkillMenu();
+}
+
+/** Insert the chosen skill and leave the caret ready for arguments. */
+function applySkill(name) {
+  dom.prompt.value = `/${name} `;
+  closeSkillMenu();
+  autosize();
+  syncPromptHint();
+  renderChrome();
+  dom.prompt.focus();
+}
+
+function moveSkillSelection(delta) {
+  if (!skillMenuItems.length) return;
+  const count = skillMenuItems.length;
+  skillMenuIndex = ((skillMenuIndex + delta) % count + count) % count;
+  paintSkillMenu();
+}
+
 function autosize() {
   const node = dom.prompt;
   node.style.height = 'auto';
@@ -3210,12 +3394,52 @@ function wireEvents() {
   dom.prompt.addEventListener('input', () => {
     autosize();
     renderChrome();
+    syncPromptHint();
+    refreshSkillMenu();
   });
   dom.prompt.addEventListener('keydown', (event) => {
+    /* The menu owns these keys while it is open — otherwise Enter would submit a
+       prompt that is still just "/revi", which is never what was meant. */
+    if (skillMenuOpen()) {
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        moveSkillSelection(1);
+        return;
+      }
+      if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        moveSkillSelection(-1);
+        return;
+      }
+      if (event.key === 'Enter' || event.key === 'Tab') {
+        if (skillMenuItems.length) {
+          event.preventDefault();
+          applySkill(skillMenuItems[skillMenuIndex].name);
+          return;
+        }
+        // The empty state has no options: Escape-like behaviour, no submit.
+        if (event.key === 'Tab') return;
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeSkillMenu();
+        return;
+      }
+    }
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
       event.preventDefault();
       submit();
     }
+  });
+  el('skill-menu').addEventListener('click', (event) => {
+    const button = event.target.closest('[data-skill]');
+    if (button) applySkill(button.dataset.skill);
+  });
+  // Clicking anywhere that is not the menu or the prompt puts the menu away.
+  document.addEventListener('mousedown', (event) => {
+    if (!skillMenuOpen()) return;
+    if (event.target.closest('#skill-menu') || event.target === dom.prompt) return;
+    closeSkillMenu();
   });
   dom.send.addEventListener('click', () => (state.streaming ? stopStreaming() : submit()));
   el('open-free').addEventListener('click', openFreeProviders);
@@ -3278,6 +3502,7 @@ async function boot() {
   readToken();
   wireEvents();
   autosize();
+  syncPromptHint();
 
   // Exposed for the headless browser tests, which assert on app state rather
   // than scraping the DOM. Harmless in normal use.
@@ -3292,6 +3517,26 @@ async function boot() {
     // user a plausible-looking but wrong diff rather than an error.
     fileChangeFromResult,
     changeCountLabel,
+    // The hint's rotation is a 15-second timer, so a test cannot wait for it
+    // naturally. These expose the same functions the UI uses, not a copy.
+    showHint,
+    syncPromptHint,
+    hintState: () => ({
+      rotation: HINT_ROTATE_MS,
+      index: hintIndex,
+      running: hintTimer !== null,
+      hidden: el('prompt-hint')?.classList.contains('is-off') ?? null,
+      on: Array.from(el('prompt-hint')?.querySelectorAll('.hint-line') || [])
+        .map((n) => n.classList.contains('is-on')),
+      text: Array.from(el('prompt-hint')?.querySelectorAll('.hint-line') || []).map((n) => n.textContent.trim()),
+    }),
+    skillMenuState: () => ({
+      open: skillMenuOpen(),
+      count: skillMenuItems.length,
+      index: skillMenuIndex,
+      names: skillMenuItems.map((s) => s.name),
+      text: el('skill-menu')?.innerText || '',
+    }),
   };
 
   if (!settings.token) {

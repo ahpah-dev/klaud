@@ -3790,14 +3790,165 @@ body {
   border-color: var(--border);
   background: var(--surface);
   box-shadow: 0 1px 2px rgb(0 0 0 / 0.04), 0 8px 24px -12px rgb(0 0 0 / 0.10);
+  /* The skill menu hangs above the composer, so this is its positioning context. */
+  position: relative;
+  /* One source of truth for the prompt's inner box. The textarea and the hint
+     overlay must sit on exactly the same baseline, and they are different
+     elements, so the values are declared once and read by both. Duplicating them
+     is how a hint ends up a few pixels above the caret. */
+  --prompt-pad: 18px 20px 4px;
+  --prompt-size: 16.5px;
+  --prompt-line: 1.55;
+}
+
+.prompt-field {
+  position: relative;
+}
+
+.prompt-field textarea {
+  display: block;
 }
 
 .composer textarea {
-  font-size: 16.5px;
-  line-height: 1.55;
-  padding: 18px 20px 4px;
+  font-size: var(--prompt-size);
+  line-height: var(--prompt-line);
+  padding: var(--prompt-pad);
   min-height: 34px;
   box-shadow: none;
+}
+
+/* --------------------------- the rotating hint --------------------------- */
+
+/**
+ * Two lines stacked in the same box, crossfading every 15 seconds.
+ *
+ * Crossfade, not a swap: both lines are in the layout the whole time and only
+ * their opacity changes, so the text that is arriving fades up while the one
+ * leaving fades out. Replacing `textContent` would be a hard cut.
+ *
+ * Sits under the textarea's text (same padding, same metrics) and is
+ * `pointer-events: none` so a click lands on the textarea beneath it.
+ */
+.prompt-hint {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  transition: opacity 0.24s var(--ease);
+}
+
+/* Hidden once there is text to read, and while the field is disabled. */
+.prompt-hint.is-off {
+  opacity: 0;
+}
+
+.prompt-hint .hint-line {
+  position: absolute;
+  inset: 0;
+  padding: var(--prompt-pad);
+  font-family: var(--font-sans);
+  font-size: var(--prompt-size);
+  line-height: var(--prompt-line);
+  color: var(--text-3);
+  opacity: 0;
+  transition: opacity 0.55s var(--ease);
+  /* Long hints must not wrap out of the box they are painted in. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.prompt-hint .hint-line.is-on {
+  opacity: 1;
+}
+
+/* A crossfade is decoration; without motion the text should simply be there. */
+@media (prefers-reduced-motion: reduce) {
+  .prompt-hint,
+  .prompt-hint .hint-line {
+    transition: none;
+  }
+}
+
+/* ----------------------------- the skill menu ---------------------------- */
+
+.skill-menu {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: calc(100% + 8px);
+  z-index: 40;
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+  max-height: 292px;
+  overflow-y: auto;
+  animation: rise 0.14s var(--ease) both;
+}
+
+.skill-menu[hidden] {
+  display: none;
+}
+
+.skill-item {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  border-radius: 9px;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  color: var(--text);
+}
+
+.skill-item[aria-selected="true"] {
+  background: var(--surface-2);
+}
+
+.skill-item .skill-name {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  font-weight: 600;
+  flex: none;
+  color: var(--text);
+}
+
+.skill-item .skill-desc {
+  font-size: 12.5px;
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+/* Only invocable by typing it, which is precisely the skill the menu exists for,
+   but worth saying so nobody expects the model to reach for it on its own. */
+.skill-item .skill-flag {
+  flex: none;
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  opacity: 0.75;
+}
+
+.skill-empty {
+  padding: 10px 12px;
+  font-size: 12.5px;
+  color: var(--text-3);
+  line-height: 1.5;
+}
+
+.skill-empty code {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
 }
 
 .composer textarea::placeholder {

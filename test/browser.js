@@ -296,6 +296,27 @@ class Browser {
   const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'klaud-browser-data-'));
   const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'klaud-browser-ws-'));
 
+  /* A project skill, written **before the server starts**. Klaud caches its skill
+   * directory scan per workspace, and the suite runs a real turn earlier on, so a
+   * skill dropped in later would be invisible to `/api/extensions` for the rest of
+   * the process — which would make the skill-menu checks pass against an empty
+   * list and prove nothing. */
+  await fs.mkdir(path.join(workspace, '.klaud', 'skills', 'deploy-helper'), { recursive: true });
+  await fs.writeFile(
+    path.join(workspace, '.klaud', 'skills', 'deploy-helper', 'SKILL.md'),
+    [
+      '---',
+      'name: deploy-helper',
+      'description: Walks through deploying this project.',
+      'disable-model-invocation: true',
+      '---',
+      '',
+      'Deploy it.',
+      '',
+    ].join('\n'),
+    'utf8'
+  );
+
   // Point the isolated instance at the mock provider before it boots.
   await fs.writeFile(
     path.join(dataDir, 'settings.json'),
@@ -1899,6 +1920,204 @@ class Browser {
       String(diffCases.countsBoth));
     check('no change is stated rather than shown as 0/0', diffCases.countsNone === 'no change',
       String(diffCases.countsNone));
+
+    /* ---------- the rotating prompt hint ----------
+       Two lines that crossfade every 15 seconds. It cannot be the textarea's
+       `placeholder` attribute: an attribute holds one string and cannot animate,
+       so it is an overlay with both lines permanently in the layout and only their
+       opacity changing. Asserted rather than photographed, because a "crossfade"
+       implemented as a textContent swap looks identical in a screenshot. */
+    const hint = await browser.evaluate(`
+      const state = window.__klaud.hintState();
+      const lines = Array.from(document.querySelectorAll('#prompt-hint .hint-line'));
+      const hintNode = document.getElementById('prompt-hint');
+      const style = getComputedStyle(hintNode);
+      return {
+        ...state,
+        count: lines.length,
+        allAbsolute: lines.every((n) => getComputedStyle(n).position === 'absolute'),
+        transitions: lines.map((n) => getComputedStyle(n).transitionDuration),
+        pointerEvents: style.pointerEvents,
+        ariaHidden: hintNode.getAttribute('aria-hidden'),
+        textareaPlaceholder: document.getElementById('prompt').getAttribute('placeholder'),
+        ariaLabel: document.getElementById('prompt').getAttribute('aria-label'),
+        visibleOpacity: lines.filter((n) => Number(getComputedStyle(n).opacity) > 0.5).length
+      };
+    `);
+
+    check('the hint says "Type / for skills"', hint.text[0] === 'Type / for skills', JSON.stringify(hint.text));
+    check('the second hint is "How can I help you today?"', hint.text[1] === 'How can I help you today?',
+      JSON.stringify(hint.text));
+    check('the rotation period is 15 seconds', hint.rotation === 15_000, String(hint.rotation));
+    check('the rotation is running while the prompt is empty', hint.running === true);
+    check('both lines are in the layout at once, which is what makes it a crossfade',
+      hint.count === 2 && hint.allAbsolute === true, JSON.stringify(hint.count));
+    check('each line has a crossfade transition',
+      hint.transitions.every((t) => parseFloat(t) > 0), JSON.stringify(hint.transitions));
+    check('exactly one line is visible at rest', hint.visibleOpacity === 1, String(hint.visibleOpacity));
+    check('the hint does not swallow clicks meant for the textarea',
+      hint.pointerEvents === 'none', hint.pointerEvents);
+    /* The overlay is decorative; the textarea carries the accessible name. */
+    check('the hint is hidden from screen readers', hint.ariaHidden === 'true', String(hint.ariaHidden));
+    check('the textarea has an accessible label of its own',
+      typeof hint.ariaLabel === 'string' && hint.ariaLabel.length > 0, String(hint.ariaLabel));
+    check('the old placeholder attribute is gone, so the text is not drawn twice',
+      hint.textareaPlaceholder === null, String(hint.textareaPlaceholder));
+
+    // Driving the rotation the way the timer would, without waiting 15 seconds.
+    const rotated = await browser.evaluate(`
+      window.__klaud.showHint(1);
+      const state = window.__klaud.hintState();
+      return state;
+    `);
+    check('advancing the hint moves the visible line', rotated.index === 1 && rotated.on[1] === true,
+      JSON.stringify(rotated.on));
+    check('the other line is still present after the swap', rotated.text.length === 2,
+      JSON.stringify(rotated.text));
+    // And back, so the pair really alternates rather than only swapping once.
+    const rotatedBack = await browser.evaluate(`window.__klaud.showHint(2); return window.__klaud.hintState();`);
+    check('the rotation wraps around', rotatedBack.index === 0 && rotatedBack.on[0] === true,
+      JSON.stringify(rotatedBack.on));
+
+    // Typing must hide it and stop the timer, or the text sits behind the words.
+    const whileTyping = await browser.evaluate(`
+      const prompt = document.getElementById('prompt');
+      prompt.value = 'half a sentence';
+      prompt.dispatchEvent(new Event('input', { bubbles: true }));
+      const state = window.__klaud.hintState();
+      prompt.value = '';
+      prompt.dispatchEvent(new Event('input', { bubbles: true }));
+      return { typed: state, cleared: window.__klaud.hintState() };
+    `);
+    check('the hint hides once there is text', whileTyping.typed.hidden === true,
+      JSON.stringify(whileTyping.typed));
+    check('the rotation stops while there is text', whileTyping.typed.running === false);
+    check('the hint comes back when the field is emptied again',
+      whileTyping.cleared.hidden === false && whileTyping.cleared.running === true,
+      JSON.stringify(whileTyping.cleared));
+
+    /* ---------- the skill menu ----------
+       The skill itself is written into the suite's workspace before the server
+       boots (see the top of this file), so this exercises a real skill rather than
+       the empty state. `/api/extensions` reads the same directories the agent does,
+       so the menu can only offer what the model would actually find. */
+
+    const menuOpen = await browser.evaluate(`
+      const prompt = document.getElementById('prompt');
+      prompt.focus();
+      prompt.value = '/';
+      prompt.dispatchEvent(new Event('input', { bubbles: true }));
+      return new Promise((resolve) => {
+        let tries = 0;
+        const poll = () => {
+          const state = window.__klaud.skillMenuState();
+          if (state.open || tries++ > 30) resolve(state);
+          else setTimeout(poll, 100);
+        };
+        setTimeout(poll, 150);
+      });
+    `);
+    check('typing "/" opens the skill menu', menuOpen.open === true, JSON.stringify(menuOpen));
+    check('the menu lists the skill that exists', menuOpen.names.includes('deploy-helper'),
+      JSON.stringify(menuOpen.names));
+    check('the menu shows the skill name with a leading slash', /\/deploy-helper/.test(String(menuOpen.text)),
+      String(menuOpen.text).slice(0, 120));
+    check('the menu shows the skill description', /Walks through deploying/.test(String(menuOpen.text)),
+      String(menuOpen.text).slice(0, 160));
+
+    const menuA11y = await browser.evaluate(`
+      const menu = document.getElementById('skill-menu');
+      const prompt = document.getElementById('prompt');
+      const opt = menu.querySelector('[role="option"]');
+      return {
+        role: menu.getAttribute('role'),
+        label: menu.getAttribute('aria-label'),
+        optionRole: opt ? opt.getAttribute('role') : null,
+        selected: opt ? opt.getAttribute('aria-selected') : null,
+        active: prompt.getAttribute('aria-activedescendant')
+      };
+    `);
+    check('the menu is a listbox with options', menuA11y.role === 'listbox' && menuA11y.optionRole === 'option',
+      JSON.stringify(menuA11y));
+    check('the first option is marked selected', menuA11y.selected === 'true', JSON.stringify(menuA11y));
+    check('the textarea points at the active option', String(menuA11y.active || '').startsWith('skill-opt'),
+      String(menuA11y.active));
+
+    const filtered = await browser.evaluate(`
+      const prompt = document.getElementById('prompt');
+      prompt.value = '/depl';
+      prompt.dispatchEvent(new Event('input', { bubbles: true }));
+      return new Promise((r) => setTimeout(() => r(window.__klaud.skillMenuState()), 250));
+    `);
+    check('typing narrows the list', filtered.names.includes('deploy-helper'), JSON.stringify(filtered.names));
+
+    /* Enter picks the skill instead of submitting — otherwise a half-typed
+       "/depl" would be sent as a message. */
+    const picked = await browser.evaluate(`
+      const prompt = document.getElementById('prompt');
+      prompt.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      return { value: prompt.value, menu: window.__klaud.skillMenuState(), bubbles: document.querySelectorAll('.bubble-user').length };
+    `);
+    check('Enter inserts the skill instead of sending', picked.value === '/deploy-helper ',
+      JSON.stringify(picked.value));
+    check('the menu closes once a skill is chosen', picked.menu.open === false);
+
+    // A query that matches nothing says so rather than showing an empty box.
+    const noMatch = await browser.evaluate(`
+      const prompt = document.getElementById('prompt');
+      prompt.value = '/zzzznope';
+      prompt.dispatchEvent(new Event('input', { bubbles: true }));
+      return new Promise((r) => setTimeout(() => r({
+        open: window.__klaud.skillMenuState().open,
+        text: document.getElementById('skill-menu').innerText
+      }), 250));
+    `);
+    check('a query with no match stays open and explains', noMatch.open === true && /No skill matches/.test(noMatch.text),
+      String(noMatch.text).slice(0, 120));
+
+    // Escape dismisses without changing what was typed.
+    const escaped = await browser.evaluate(`
+      const prompt = document.getElementById('prompt');
+      prompt.value = '/depl';
+      prompt.dispatchEvent(new Event('input', { bubbles: true }));
+      return new Promise((resolve) => setTimeout(() => {
+        prompt.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        resolve({ open: window.__klaud.skillMenuState().open, value: prompt.value });
+      }, 250));
+    `);
+    check('Escape closes the menu', escaped.open === false);
+    check('Escape leaves the typed text alone', escaped.value === '/depl', JSON.stringify(escaped.value));
+
+    // Arguments end the query, so the menu gets out of the way.
+    const withArgs = await browser.evaluate(`
+      const prompt = document.getElementById('prompt');
+      prompt.value = '/deploy-helper now please';
+      prompt.dispatchEvent(new Event('input', { bubbles: true }));
+      return new Promise((r) => setTimeout(() => r(window.__klaud.skillMenuState().open), 250));
+    `);
+    check('once arguments are being typed the menu closes', withArgs === false, String(withArgs));
+
+    // Slash in the middle of a sentence is not a command.
+    const midSentence = await browser.evaluate(`
+      const prompt = document.getElementById('prompt');
+      prompt.value = 'add a path like src/main';
+      prompt.dispatchEvent(new Event('input', { bubbles: true }));
+      return new Promise((r) => setTimeout(() => r(window.__klaud.skillMenuState().open), 250));
+    `);
+    check('a slash inside a sentence does not open the menu', midSentence === false, String(midSentence));
+
+    const hintShot = await browser.screenshot(
+      path.join(PROJECT, 'docs', 'screenshots', 'screenshot-skill-menu.png')
+    );
+    /* `fs` here is fs/promises, so the check is that the capture returned bytes.
+       A write that failed would have thrown and been caught by the harness. */
+    check('a screenshot of the new prompt affordances was taken',
+      typeof hintShot === 'string' && hintShot.endsWith('screenshot-skill-menu.png'), String(hintShot));
+
+    check('no exceptions from the hint or the skill menu', browser.exceptions.length === 0,
+      browser.exceptions.join('\n'));
+    check('no console errors from the hint or the skill menu', browser.consoleMessages.length === 0,
+      JSON.stringify(browser.consoleMessages));
 
     console.log(`\n  screenshots: ${welcomeShot}, ${turnShot}, ${modalShot}, ${connectionsShot}, ${darkShot}, ${freeShot}, ${setupShot}, ${failShot}, ${coworkShot}`);
   } finally {
