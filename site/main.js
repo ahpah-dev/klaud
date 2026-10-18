@@ -1,9 +1,9 @@
-/* Klaud site — small progressive enhancements only. */
+/* Klaud site — Progressive enhancements & micro-interactions */
 
 (function () {
   'use strict';
 
-  /* Reveal on scroll */
+  /* ---------- Scroll Reveal Progressive Enhancement ---------- */
   var revealables = Array.prototype.slice.call(document.querySelectorAll('.reveal'));
   var reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -16,51 +16,91 @@
         var el = entry.target;
         var siblings = el.parentElement ? Array.prototype.slice.call(el.parentElement.children) : [];
         var index = siblings.indexOf(el);
-        el.style.transitionDelay = Math.min(index > -1 ? index * 70 : 0, 350) + 'ms';
+        el.style.transitionDelay = Math.min(index > -1 ? index * 60 : 0, 300) + 'ms';
         el.classList.add('is-visible');
         observer.unobserve(el);
       });
-    }, { rootMargin: '0px 0px -8% 0px', threshold: 0.08 });
+    }, { rootMargin: '0px 0px -6% 0px', threshold: 0.08 });
 
     revealables.forEach(function (el) { observer.observe(el); });
   }
 
-  /* Header border + shadow once the page leaves the top */
+  /* ---------- Header Shadow & Active Section Spying ---------- */
   var header = document.querySelector('.site-header');
+  var navLinks = Array.prototype.slice.call(document.querySelectorAll('.site-nav a'));
+  var sections = Array.prototype.slice.call(document.querySelectorAll('section[id]'));
+
   var onScroll = function () {
-    if (!header) return;
-    header.classList.toggle('is-scrolled', window.scrollY > 8);
+    var scrollY = window.scrollY || window.pageYOffset || 0;
+    if (header) {
+      header.classList.toggle('is-scrolled', scrollY > 12);
+    }
+
+    /* Active section highlight */
+    if (sections.length && navLinks.length) {
+      var currentId = '';
+      for (var i = 0; i < sections.length; i++) {
+        var sec = sections[i];
+        var top = sec.offsetTop - 120;
+        var height = sec.offsetHeight;
+        if (scrollY >= top && scrollY < top + height) {
+          currentId = '#' + sec.getAttribute('id');
+          break;
+        }
+      }
+      navLinks.forEach(function (link) {
+        if (link.getAttribute('href') === currentId) {
+          link.classList.add('is-active');
+        } else {
+          link.classList.remove('is-active');
+        }
+      });
+    }
   };
+
   onScroll();
   window.addEventListener('scroll', onScroll, { passive: true });
 
-  /* Copy buttons */
+  /* ---------- Copy to Clipboard with Feedback ---------- */
   Array.prototype.slice.call(document.querySelectorAll('[data-copy]')).forEach(function (btn) {
     btn.addEventListener('click', function () {
       var text = btn.getAttribute('data-copy') || '';
       var label = btn.querySelector('.copy-label');
+      var originalLabel = label ? label.textContent : '';
+
       var done = function () {
         btn.classList.add('is-copied');
-        if (label) label.textContent = 'copied';
+        if (label) label.textContent = 'copied!';
         window.setTimeout(function () {
           btn.classList.remove('is-copied');
-          if (label) label.textContent = 'copy';
-        }, 1600);
+          if (label) label.textContent = originalLabel || 'copy';
+        }, 1800);
       };
+
       if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(text).then(done, done);
+        navigator.clipboard.writeText(text).then(done, function () {
+          fallbackCopy(text, done);
+        });
       } else {
-        var ta = document.createElement('textarea');
-        ta.value = text;
-        ta.setAttribute('readonly', '');
-        ta.style.position = 'fixed';
-        ta.style.opacity = '0';
-        document.body.appendChild(ta);
-        ta.select();
-        try { document.execCommand('copy'); } catch (e) { /* nothing else to try */ }
-        document.body.removeChild(ta);
-        done();
+        fallbackCopy(text, done);
       }
     });
   });
+
+  function fallbackCopy(text, callback) {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try {
+      document.execCommand('copy');
+    } catch (e) {
+      /* ignore */
+    }
+    document.body.removeChild(ta);
+    if (callback) callback();
+  }
 })();

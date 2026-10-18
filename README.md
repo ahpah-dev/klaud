@@ -1,5 +1,13 @@
 # Klaud
 
+[![Website](https://img.shields.io/badge/website-klaud--app.vercel.app-d97757?style=flat)](https://klaud-app.vercel.app)
+[![Release](https://img.shields.io/github/v/release/ahpah-dev/klaud?color=24211c&label=release)](https://github.com/ahpah-dev/klaud/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-5c564c)](LICENSE)
+[![Zero Dependencies](https://img.shields.io/badge/dependencies-0-d97757)](#)
+[![Node](https://img.shields.io/badge/node-%3E%3D18-24211c)](#)
+
+> **Website & Live Guide:** [klaud-app.vercel.app](https://klaud-app.vercel.app)
+
 **v1.5.0** — a local coding agent with a built-in list of **genuinely free, no-card
 OpenAI-compatible providers**. It reads and writes real files on your machine,
 runs real commands, and verifies its own work — behind a warm, paper-like
