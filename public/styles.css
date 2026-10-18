@@ -851,7 +851,8 @@ body.sidebar-hidden .sidebar-reveal {
 }
 
 .welcome p.lede {
-  font-size: 16px;
+  font-family: var(--font-serif);
+  font-size: 17px;
   color: var(--text-2);
   margin: 0 0 26px;
   max-width: 58ch;
@@ -996,8 +997,12 @@ body.sidebar-hidden .sidebar-reveal {
 
 /* ------------------------------- prose ---------------------------------- */
 
+/* Agent responses are prose, not UI: they take the same Anthropic Serif the
+   marketing site sets its body copy in. Tool cards, labels and code stay sans
+   and mono, so the transcript still reads as UI wrapped around prose. */
 :where(.prose) {
-  font-size: 15px;
+  font-family: var(--font-serif);
+  font-size: 15.5px;
   line-height: 1.68;
   overflow-wrap: anywhere;
 }
@@ -1356,7 +1361,8 @@ details.tool + .prose {
 
 .thinking .body {
   padding: 0 12px 11px;
-  font-size: 13.5px;
+  font-family: var(--font-serif);
+  font-size: 14px;
   color: var(--text-2);
   white-space: pre-wrap;
   max-height: 340px;
@@ -2141,6 +2147,18 @@ details[open] > .tool-head .chev {
 
 .modal-foot .grow {
   flex: 1;
+}
+
+/* The footer carries a hint plus actions; the buttons must never wrap their
+   label while the hint gives way. */
+.modal-foot .hint {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.modal-foot .btn {
+  flex: none;
+  white-space: nowrap;
 }
 
 .field {
@@ -4171,6 +4189,113 @@ body {
   color: var(--text);
   white-space: pre;
   user-select: all;
+}
+
+/* ------------------------------ Klaud CLI ------------------------------ *
+ * The Code tab: install line, three start-here cards, and the command
+ * reference. A terminal product should look like terminal output — mono
+ * labels, hairline rows, nothing decorative.
+ * ---------------------------------------------------------------------- */
+
+.cli-install {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 14px 0 16px;
+  padding: 11px 13px;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border));
+  background: var(--accent-soft);
+  border-radius: var(--radius);
+}
+
+.cli-install code {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text);
+  user-select: all;
+}
+
+.cli-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(215px, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.cli-card {
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  border-radius: var(--radius-lg);
+  padding: 12px 14px;
+}
+
+.cli-card h4 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.cli-card p {
+  margin: 9px 0 0;
+  font-size: 12.5px;
+  color: var(--text-3);
+  line-height: 1.5;
+}
+
+.cli-card .setup-command {
+  margin-top: 0;
+}
+
+.cli-list {
+  border-top: 1px solid var(--border);
+}
+
+.cli-row {
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  gap: 14px;
+  padding: 9px 2px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+  align-items: baseline;
+}
+
+.cli-row code {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  color: var(--accent-text);
+  background: none;
+  border: none;
+  padding: 0;
+  user-select: all;
+}
+
+.cli-row span {
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.cli-note {
+  margin-top: 14px;
+  font-size: 12.5px;
+  color: var(--text-3);
+  line-height: 1.7;
+}
+
+.cli-note code {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+
+@media (max-width: 640px) {
+  .cli-install {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .cli-row {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
 }
 
 .composer textarea::placeholder {

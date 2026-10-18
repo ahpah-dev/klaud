@@ -334,6 +334,54 @@ The console prints a URL carrying a session token. Open it once and Klaud
 remembers the browser. Every `/api/*` route requires that token, so a random web
 page on your machine cannot drive your agent.
 
+## Klaud CLI
+
+The same agent in your terminal: the same nine tools, the same permission modes
+and the same `~/.klaud` as the web app. Not a wrapper around it — both front
+ends call the same engine in-process.
+
+```sh
+npm i -g github:ahpah-dev/klaud
+
+klaud                            # interactive session
+klaud "fix the failing test"     # one prompt, then exit
+```
+
+| command | what it does |
+| --- | --- |
+| `klaud` | streamed replies, tool calls as they happen, approvals answered with one keypress (`y` once · `n` deny · `a` always · `r` read-only) |
+| `klaud run "…"` | one shot; `--json` for scripts, `-c` / `--resume <id>` to continue a session |
+| `klaud init` | guided setup: pick a free provider, paste its key, choose model and permission mode (`--provider`, `--key` skip the prompts) |
+| `klaud providers --check` | the built-in no-card endpoints, probed live before printing |
+| `klaud model [id]` | show or set the model; `--list` asks the endpoint what it actually has |
+| `klaud config [key] [value]` | read or write any setting; `apiKey` is masked on read |
+| `klaud skills` | the skills loaded into every session, with their sources |
+| `klaud chats` | saved sessions and their ids, for `--resume` |
+| `klaud doctor` | Node, settings, workspace writability and provider reachability in one pass |
+| `klaud serve` | start the web UI from the same install |
+
+Inside a session: `/help`, `/model`, `/permissions`, `/skills`, `/sessions`,
+`/resume <id>`, `/config`, `/clear`, `/exit`. Ctrl+C cancels a running turn, and
+exits from an empty line. Typing `/code-review …` invokes a skill the same way
+the web app does.
+
+Two rules the output follows, because they are what makes a CLI scriptable:
+
+- **stdout is the answer, stderr is the chatter** — so `klaud run "…" > out.md`
+  writes prose, and `--json` can own stdout with one object:
+  `{finished, steps, usage, toolCalls, finalText, chatId}`.
+- **exit codes mean something** — `0` done, `1` the run failed, `2` bad usage,
+  `130` you cancelled it.
+
+Flags: `--yes` (approve every write and command), `--permission-mode
+auto|ask|readonly`, `--model`, `--workspace`, `--quiet`, `--verbose`,
+`--no-color` (as is `NO_COLOR`). In `ask` mode a run with no terminal on stdin
+refuses to start instead of approving on your behalf — pass `--yes` or
+`--permission-mode readonly`.
+
+Covered by `node test/cli.js`: 27 checks over the surface, the exit codes, a
+full turn against a mock provider, and the interactive session.
+
 ## Start free — no card, ever
 
 The **Free** button in the top bar opens a picker of endpoints that cost nothing.

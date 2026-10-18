@@ -2165,6 +2165,102 @@ function wireProviderCards(root, onUse) {
   });
 }
 
+/**
+ * Klaud CLI — the "Code" tab.
+ *
+ * Static content: nothing here calls the API, so it mounts instantly and works
+ * even before a key is configured. The point is to get a terminal user from
+ * "I clicked Code" to `klaud` running in about twenty seconds.
+ */
+function openCli() {
+  const commands = [
+    ['klaud', 'Interactive chat in the terminal — streaming replies, tool calls, approvals'],
+    ['klaud run "…"', 'One-shot: answer a prompt and exit, with --json for scripting'],
+    ['klaud -c', 'Continue the most recent session, or resume any with --resume <id>'],
+    ['klaud providers', 'The built-in free, no-card endpoints, with --check to probe them'],
+    ['klaud model [name]', 'Show or switch the model without opening Settings'],
+    ['klaud config [k] [v]', 'Read or write any setting; the API key is masked on read'],
+    ['klaud doctor', 'Node version, data dir, workspace writability, provider reachability'],
+    ['klaud skills', 'The bundled skills and how to invoke them in a prompt'],
+    ['klaud serve', 'Start the web UI from the same install'],
+  ];
+
+  mountModal(`
+    <div class="modal-head">
+      ${icon('i-terminal')}
+      <h2>Klaud CLI</h2>
+      <button class="icon-btn" data-close aria-label="Close">${icon('i-close')}</button>
+    </div>
+    <div class="modal-body">
+      <p class="fp-lede">
+        The same agent, in your terminal: replies stream as they are written, tool calls
+        appear as they happen, and approvals are a single keypress. Zero dependencies —
+        one <code>npm i -g</code> and the <code>klaud</code> command is on your PATH.
+      </p>
+
+      <div class="cli-install">
+        <code>npm i -g github:ahpah-dev/klaud</code>
+        <button class="btn btn-ghost btn-sm" data-copy-cmd="npm i -g github:ahpah-dev/klaud">
+          ${icon('i-terminal')} Copy
+        </button>
+      </div>
+
+      <div class="cli-grid">
+        <div class="cli-card">
+          <h4>Start chatting</h4>
+          <div class="setup-command"><code>klaud</code></div>
+          <p>Pick up where the web app left off — sessions are shared.</p>
+        </div>
+        <div class="cli-card">
+          <h4>One-shot</h4>
+          <div class="setup-command"><code>klaud run "fix the failing test"</code></div>
+          <p>Runs the turn, prints the result, exits. Add <code>--json</code> to pipe it.</p>
+        </div>
+        <div class="cli-card">
+          <h4>Set it up</h4>
+          <div class="setup-command"><code>klaud providers --check</code></div>
+          <p>Probe the free endpoints, then <code>klaud config apiKey …</code>.</p>
+        </div>
+      </div>
+
+      <div class="cli-list">
+        ${commands
+          .map(
+            ([cmd, desc]) => `
+          <div class="cli-row">
+            <code>${escapeHtml(cmd)}</code>
+            <span>${escapeHtml(desc)}</span>
+          </div>`
+          )
+          .join('')}
+      </div>
+
+      <p class="cli-note">
+        In a chat session: <code>/help</code>, <code>/model</code>, <code>/permissions</code>,
+        <code>/skills</code>, <code>/clear</code>, <code>/exit</code>. Ctrl+C cancels a running
+        turn; Ctrl+C on an empty line exits.
+      </p>
+    </div>
+    <div class="modal-foot">
+      <span class="hint">Shares ~/.klaud with this app — one config, two front ends.</span>
+      <div class="grow"></div>
+      <a class="btn btn-ghost" href="https://klaud-app.vercel.app/#cli" target="_blank" rel="noopener">${icon('i-external')} Docs</a>
+      <a class="btn btn-primary" href="https://github.com/ahpah-dev/klaud" target="_blank" rel="noopener">${icon('i-terminal')} Get the CLI</a>
+    </div>
+  `);
+
+  dom.modalRoot.querySelectorAll('[data-copy-cmd]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(button.dataset.copyCmd);
+        toast('Command copied');
+      } catch {
+        toast(button.dataset.copyCmd);
+      }
+    });
+  });
+}
+
 /** The full picker: which free endpoints are reachable right now. */
 async function openFreeProviders() {
   if (state.unauthorized || !settings.token) {
@@ -3521,7 +3617,7 @@ function wireEvents() {
   if (el('nav-artifacts')) el('nav-artifacts').addEventListener('click', () => {
     toast('Artifacts: Project files and tool outputs appear inline during chat.');
   });
-  if (el('nav-code')) el('nav-code').addEventListener('click', openFreeProviders);
+  if (el('nav-code')) el('nav-code').addEventListener('click', openCli);
   if (el('nav-customize')) el('nav-customize').addEventListener('click', openSettings);
   el('open-settings-top').addEventListener('click', openSettings);
   el('toggle-theme').addEventListener('click', toggleTheme);

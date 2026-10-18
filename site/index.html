@@ -15,7 +15,7 @@
 <meta name="twitter:title" content="Klaud — a local coding agent that is 100% free">
 <meta name="twitter:description" content="Real files, real commands, verified work. Free to install, free to run.">
 <meta name="twitter:image" content="https://klaud-app.vercel.app/og.png">
-<meta name="theme-color" content="#f0eee6">
+<meta name="theme-color" content="#faf9f5">
 <meta name="color-scheme" content="light">
 <link rel="canonical" href="https://klaud-app.vercel.app/">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
@@ -61,6 +61,7 @@
       <a href="#free">Free to run</a>
       <a href="#safety">Safety</a>
       <a href="#gallery">Interface</a>
+      <a href="#cli">CLI</a>
       <a href="#install">Install</a>
     </nav>
     <div class="header-actions">
@@ -84,40 +85,44 @@
 
   <!-- ============ HERO ============ -->
   <section class="hero">
-    <div class="hero-glow hero-glow-1" aria-hidden="true"></div>
-    <div class="hero-glow hero-glow-2" aria-hidden="true"></div>
     <div class="wrap hero-inner">
-      <div class="hero-badge reveal">
-        <span class="badge-dot" aria-hidden="true"></span>
-        <span class="badge-tag">v1.5.0</span>
-        <span class="badge-sep" aria-hidden="true">·</span>
-        <span>Zero dependencies</span>
-        <span class="badge-sep" aria-hidden="true">·</span>
-        <span>MIT License</span>
-      </div>
-      <h1 class="reveal">
-        Free to install.<br>
-        <em>Free to run.</em>
-      </h1>
-      <p class="lede reveal">
-        Klaud is a local coding agent with a built-in list of genuinely free, no-card
-        model providers. It reads and writes real files on your machine, runs real
-        commands, and verifies its own work. Bring your own key — or bring no key at all.
-      </p>
-      <div class="cta-row reveal">
-        <a class="btn btn-accent" href="https://github.com/ahpah-dev/klaud" target="_blank" rel="noopener">
-          <span>Get Klaud</span>
-          <svg class="i-arrow" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4"/></svg>
-        </a>
-        <button class="copy-chip" type="button" data-copy="npm start" aria-label="Copy npm start">
-          <span class="prompt" aria-hidden="true">$</span>
-          <code>npm start</code>
-          <span class="copy-feedback" aria-hidden="true">
-            <svg class="i-copy" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="5" y="5" width="8" height="8" rx="1.5"/><path d="M11 5V3.5A1.5 1.5 0 0 0 9.5 2h-6A1.5 1.5 0 0 0 2 3.5v6A1.5 1.5 0 0 0 3.5 11H5"/></svg>
-            <svg class="i-check" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M3.5 8.5 6.5 11.5 12.5 4.5"/></svg>
-          </span>
-          <span class="copy-label">copy</span>
-        </button>
+      <div class="hero-grid">
+        <div class="hero-main">
+          <div class="hero-badge reveal">
+            <span class="badge-dot" aria-hidden="true"></span>
+            <span class="badge-tag">v1.5.0</span>
+            <span class="badge-sep" aria-hidden="true">·</span>
+            <span>Zero dependencies</span>
+            <span class="badge-sep badge-optional" aria-hidden="true">·</span>
+            <span class="badge-optional">MIT License</span>
+          </div>
+          <h1 class="reveal">
+            Free to install.<br>
+            <em>Free to run.</em>
+          </h1>
+          <div class="cta-row reveal">
+            <a class="btn btn-accent" href="https://github.com/ahpah-dev/klaud" target="_blank" rel="noopener">
+              <span>Get Klaud</span>
+              <svg class="i-arrow" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4"/></svg>
+            </a>
+            <button class="copy-chip" type="button" data-copy="npm start" aria-label="Copy npm start">
+              <span class="prompt" aria-hidden="true">$</span>
+              <code>npm start</code>
+              <span class="copy-feedback" aria-hidden="true">
+                <svg class="i-copy" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="5" y="5" width="8" height="8" rx="1.5"/><path d="M11 5V3.5A1.5 1.5 0 0 0 9.5 2h-6A1.5 1.5 0 0 0 2 3.5v6A1.5 1.5 0 0 0 3.5 11H5"/></svg>
+                <svg class="i-check" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M3.5 8.5 6.5 11.5 12.5 4.5"/></svg>
+              </span>
+              <span class="copy-label">copy</span>
+            </button>
+          </div>
+        </div>
+        <div class="hero-side">
+          <p class="lede reveal">
+            Klaud is a local coding agent with a built-in list of genuinely free, no-card
+            model providers. It reads and writes real files on your machine, runs real
+            commands, and verifies its own work. Bring your own key — or bring no key at all.
+          </p>
+        </div>
       </div>
 
       <figure class="window reveal">
@@ -503,6 +508,101 @@
     </div>
   </section>
 
+  <!-- ============ CLI ============ -->
+  <section class="section" id="cli">
+    <div class="wrap">
+      <header class="section-head">
+        <p class="eyebrow reveal">Klaud CLI</p>
+        <h2 class="reveal">The same agent, in your terminal.</h2>
+        <p class="standfirst reveal">
+          Klaud CLI is not a second product — it is the same nine tools, the same
+          permission modes and the same <code>~/.klaud</code> as the app, driven from a
+          shell. Replies stream as they are written, tool calls appear as they happen, and
+          an approval is one keypress.
+        </p>
+      </header>
+
+      <div class="cli-showcase reveal">
+        <figure class="window window-dark">
+          <div class="window-bar" aria-hidden="true">
+            <div class="window-dots">
+              <span class="dot dot-close"></span>
+              <span class="dot dot-min"></span>
+              <span class="dot dot-max"></span>
+            </div>
+            <span class="window-title">klaud — zsh</span>
+          </div>
+          <pre class="terminal"><span class="t-dim">$ npm i -g github:ahpah-dev/klaud</span>
+<span class="t-prompt">$</span> <span class="t-cmd">klaud</span>
+<span class="t-dim">Klaud CLI v1.5.0 · nemotron-3.5-120b · permissions: ask · workspace ~/projects/api</span>
+<span class="t-dim">/help for commands · Ctrl+C cancels a turn</span>
+
+<span class="t-prompt">❯</span> <span class="t-cmd">add rate limiting to /login and prove it works</span>
+
+  <span class="t-tool">→ read_file</span>    src/routes/login.js        <span class="t-ok">✓ 6ms</span>
+  <span class="t-tool">→ run_command</span> node test/rate.test.js    <span class="t-fail">✗ exit 1 · 402ms</span>
+  <span class="t-tool">→ edit_file</span>   src/routes/login.js        <span class="t-ok">✓ 14 added, 2 removed</span>
+  <span class="t-tool">→ run_command</span> node test/rate.test.js     <span class="t-ok">✓ exit 0 · 388ms</span>
+
+<span class="t-answer">Added a limiter keyed by IP: 10 requests a minute on /login. Verified by
+running the suite — 7 passing, exit 0. Nothing outside the workspace changed.</span>
+
+<span class="t-prompt">❯</span> <span class="t-dim">_</span></pre>
+        </figure>
+      </div>
+
+      <div class="tools-block cli-commands">
+        <div class="tools-copy reveal">
+          <p class="eyebrow">Install</p>
+          <h3 class="tools-title">One global install, then two commands.</h3>
+          <p>
+            Installed from the same repository as the app, so a bug fix reaches both front
+            ends at once. It needs Node 18+ and nothing else: no build step, no daemon, no
+            config file you have to hand-edit.
+          </p>
+          <div class="cta-row">
+            <button class="copy-chip" type="button" data-copy="npm i -g github:ahpah-dev/klaud" aria-label="Copy install command">
+              <span class="prompt" aria-hidden="true">$</span>
+              <code>npm i -g github:ahpah-dev/klaud</code>
+              <span class="copy-feedback" aria-hidden="true">
+                <svg class="i-copy" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="5" y="5" width="8" height="8" rx="1.5"/><path d="M11 5V3.5A1.5 1.5 0 0 0 9.5 2h-6A1.5 1.5 0 0 0 2 3.5v6A1.5 1.5 0 0 0 3.5 11H5"/></svg>
+                <svg class="i-check" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M3.5 8.5 6.5 11.5 12.5 4.5"/></svg>
+              </span>
+              <span class="copy-label">copy</span>
+            </button>
+            <a class="btn btn-ghost" href="https://github.com/ahpah-dev/klaud#readme" target="_blank" rel="noopener">Read the README</a>
+          </div>
+        </div>
+
+        <dl class="tools-list reveal">
+          <div class="tool-item"><dt><code>klaud</code></dt><dd>interactive chat: streaming, tool calls, one-key approvals</dd></div>
+          <div class="tool-item"><dt><code>klaud run "…"</code></dt><dd>one prompt, then exit — <code>--json</code> for scripts</dd></div>
+          <div class="tool-item"><dt><code>klaud -c</code></dt><dd>continue the last session, or <code>--resume &lt;id&gt;</code> any of them</dd></div>
+          <div class="tool-item"><dt><code>klaud init</code></dt><dd>guided setup: free provider, key, model, permission mode</dd></div>
+          <div class="tool-item"><dt><code>klaud providers</code></dt><dd>the built-in no-card endpoints, <code>--check</code> to probe them</dd></div>
+          <div class="tool-item"><dt><code>klaud config</code></dt><dd>read or write any setting; the key is masked when read</dd></div>
+          <div class="tool-item"><dt><code>klaud doctor</code></dt><dd>Node, config, workspace and reachability, in one pass</dd></div>
+          <div class="tool-item"><dt><code>klaud skills</code></dt><dd>the skills loaded into every session</dd></div>
+          <div class="tool-item"><dt><code>klaud serve</code></dt><dd>start the web UI from the same install</dd></div>
+        </dl>
+      </div>
+
+      <div class="note-row reveal">
+        <p class="note">
+          <strong>One config, two front ends.</strong> The CLI and the app share
+          <code>~/.klaud</code> — set a provider once and both know it, and a conversation
+          started in the terminal resumes in the browser with its tools and history intact.
+        </p>
+        <p class="note">
+          <strong>Same boundaries.</strong> Path confinement, the read-only mode and the
+          destructive-command refusal are enforced by the engine, not by the interface, so
+          <code>--permission-mode readonly</code> refuses a write whether you are in a
+          terminal or a browser.
+        </p>
+      </div>
+    </div>
+  </section>
+
   <!-- ============ INSTALL ============ -->
   <section class="section section-tint" id="install">
     <div class="wrap">
@@ -583,7 +683,7 @@
 </main>
 
 <footer class="site-footer">
-  <div class="wrap footer-inner">
+  <div class="wrap footer-top">
     <div class="footer-brand">
       <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
         <rect width="32" height="32" rx="7" fill="#d97757"/>
@@ -596,17 +696,37 @@
         <p class="footer-tag">A local coding agent. Free in every sense.</p>
       </div>
     </div>
-    <div class="footer-meta">
-      <span class="footer-pill">v1.5.0</span>
-      <span class="footer-sep">·</span>
-      <span>Zero dependencies</span>
-      <span class="footer-sep">·</span>
-      <span>100% Free</span>
-    </div>
-    <nav class="footer-nav" aria-label="Footer links">
+
+    <nav class="footer-col" aria-label="Product">
+      <p class="footer-col-title">Product</p>
+      <a href="#capabilities">Capabilities</a>
+      <a href="#free">Free to run</a>
+      <a href="#safety">Safety</a>
+      <a href="#gallery">Interface</a>
+      <a href="#cli">CLI</a>
+      <a href="#install">Install</a>
+    </nav>
+
+    <nav class="footer-col" aria-label="Project">
+      <p class="footer-col-title">Project</p>
       <a href="https://github.com/ahpah-dev/klaud" target="_blank" rel="noopener">GitHub</a>
       <a href="https://github.com/ahpah-dev/klaud#readme" target="_blank" rel="noopener">README</a>
       <a href="https://github.com/ahpah-dev/klaud/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a>
+      <a href="https://github.com/ahpah-dev/klaud/issues" target="_blank" rel="noopener">Issues</a>
+    </nav>
+
+    <div class="footer-col">
+      <p class="footer-col-title">Release</p>
+      <span class="footer-pill">v1.5.0</span>
+      <span>Zero dependencies</span>
+      <span>100% free, no card</span>
+      <span>Node 18 or newer</span>
+    </div>
+  </div>
+
+  <div class="wrap footer-bottom">
+    <span class="footer-meta">© 2026 Klaud contributors <span class="footer-sep">·</span> MIT licensed</span>
+    <nav class="footer-nav" aria-label="Footer links">
       <a href="#top" class="back-to-top">Back to top ↑</a>
     </nav>
   </div>
