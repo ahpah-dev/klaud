@@ -21,6 +21,111 @@ const CHROME_PATH = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/* What the first prompt "writes": a real, self-contained Anthropic-styled page.
+   It is the content of the artifact card in the marketing shots, so it has to
+   be an actual page — the pane opens it in a sandboxed frame, and a page of
+   lorem ipsum would show. */
+const ARTIFACT_LEDE =
+  "Single self-contained HTML page styled after Anthropic's warm, editorial look: " +
+  'ivory and clay palette, serif headlines, a rotating burst logo, three model-tier ' +
+  'cards, a principles grid, a dark research section, and a newsletter signup. ' +
+  'It switches between light and dark mode and works on mobile.\n\n';
+
+const ARTIFACT_HTML = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Anthropic Theme — an unofficial concept</title>
+<style>
+  :root { --ivory:#faf9f5; --ink:#141413; --clay:#d97757; --line:#e5e2d9; --muted:#5c594f; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--ivory); color:var(--ink); font:17px/1.6 Georgia, "Times New Roman", serif; transition: background .25s, color .25s; }
+  body.dark { --ivory:#141413; --ink:#faf9f5; --line:#33322e; --muted:#b5b1a6; }
+  header { display:flex; align-items:center; justify-content:space-between; padding:18px clamp(20px,5vw,48px); border-bottom:1px solid var(--line); position:sticky; top:0; background:var(--ivory); }
+  .mark { font:700 17px/1 ui-sans-serif, system-ui, sans-serif; letter-spacing:-.02em; }
+  nav a { margin-left:22px; color:var(--ink); text-decoration:none; font:500 14px/1 ui-sans-serif, system-ui, sans-serif; }
+  nav a:hover { color:var(--clay); }
+  .toggle { margin-left:22px; padding:7px 15px; border:1px solid var(--line); border-radius:999px; background:transparent; color:var(--ink); font:600 13px ui-sans-serif, system-ui, sans-serif; cursor:pointer; }
+  .hero { max-width:980px; margin:0 auto; padding:clamp(48px,8vw,88px) clamp(20px,5vw,48px) 36px; text-align:left; }
+  .burst { width:56px; height:56px; border-radius:50%; margin-bottom:26px; background:conic-gradient(var(--clay) 0 25%, transparent 0 50%, var(--clay) 0 75%, transparent 0); animation:spin 11s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  h1 { margin:0 0 16px; font:700 clamp(32px,5.4vw,58px)/1.06 ui-sans-serif, system-ui, sans-serif; letter-spacing:-.03em; }
+  .lede { margin:0; max-width:56ch; font-size:clamp(17px,2vw,21px); color:var(--muted); }
+  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(215px,1fr)); gap:16px; max-width:980px; margin:0 auto; padding:24px clamp(20px,5vw,48px) 56px; }
+  .card { border:1px solid var(--line); border-radius:14px; padding:22px; background:color-mix(in srgb, var(--ink) 3%, var(--ivory)); }
+  .card h3 { margin:0 0 4px; font:600 16px ui-sans-serif, system-ui, sans-serif; }
+  .price { display:block; margin:10px 0 8px; color:var(--clay); font:700 26px ui-sans-serif, system-ui, sans-serif; }
+  .card p { margin:0; font-size:15px; color:var(--muted); }
+  .principles { max-width:980px; margin:0 auto; padding:0 clamp(20px,5vw,48px) 64px; }
+  .principles h2, .research h2 { margin:0 0 20px; font:700 clamp(24px,3.4vw,34px)/1.15 ui-sans-serif, system-ui, sans-serif; letter-spacing:-.02em; }
+  .p-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:20px; }
+  .p-grid div { border-top:2px solid var(--clay); padding-top:12px; }
+  .p-grid strong { display:block; font:600 15px ui-sans-serif, system-ui, sans-serif; margin-bottom:6px; }
+  .p-grid span { font-size:15px; color:var(--muted); }
+  .research { background:#141413; color:#faf9f5; padding:clamp(40px,6vw,64px) clamp(20px,5vw,48px); }
+  .research p { max-width:62ch; color:#c9c5ba; font-size:16px; }
+  .research .inner { max-width:980px; margin:0 auto; }
+  .signup { display:flex; gap:8px; max-width:440px; margin-top:18px; }
+  .signup input { flex:1; min-width:0; padding:11px 14px; border:1px solid #3a3934; border-radius:10px; background:#1f1e1c; color:#faf9f5; font:15px ui-sans-serif, system-ui, sans-serif; }
+  .signup button { padding:11px 20px; border:0; border-radius:999px; background:var(--clay); color:#fff; font:600 14px ui-sans-serif, system-ui, sans-serif; cursor:pointer; }
+  .ok { color:#8fd3a5; font-size:14px; margin-top:10px; }
+  footer { border-top:1px solid var(--line); padding:20px clamp(20px,5vw,48px); font:13px ui-sans-serif, system-ui, sans-serif; color:var(--muted); display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+  @media (max-width:640px) { nav a { display:none; } }
+</style>
+</head>
+<body>
+<header>
+  <div class="mark">Anthropic-ish</div>
+  <nav>
+    <a href="#models">Models</a><a href="#principles">Principles</a><a href="#research">Research</a>
+    <button class="toggle" onclick="document.body.classList.toggle('dark')">Light / dark</button>
+  </nav>
+</header>
+
+<section class="hero">
+  <div class="burst" aria-hidden="true"></div>
+  <h1>AI research and products that put safety at the frontier</h1>
+  <p class="lede">A single self-contained page in the Anthropic style — ivory and clay, serif headlines,
+  no dependencies, no build step. This is an unofficial concept, not an Anthropic site.</p>
+</section>
+
+<section class="cards" id="models">
+  <div class="card"><h3>Haiku</h3><span class="price">$1</span><p>Fastest tier. Drafts, summaries and the short calls an agent makes in a loop.</p></div>
+  <div class="card"><h3>Sonnet</h3><span class="price">$3</span><p>The working tier: code, review, and multi-step tool use at a steady pace.</p></div>
+  <div class="card"><h3>Opus</h3><span class="price">$15</span><p>Deepest reasoning for the hard third of the work, where being right is the point.</p></div>
+</section>
+
+<section class="principles" id="principles">
+  <h2>Principles</h2>
+  <div class="p-grid">
+    <div><strong>Safety at the frontier</strong><span>Capability and safeguards advance together, or not at all.</span></div>
+    <div><strong>Honesty over polish</strong><span>Numbers are labelled published or estimated, never implied.</span></div>
+    <div><strong>Yours to inspect</strong><span>Ivory, clay and type — a design system you can read in one file.</span></div>
+  </div>
+</section>
+
+<section class="research" id="research">
+  <div class="inner">
+    <h2>Research</h2>
+    <p>Interpretability, alignment and societal impacts — the work behind the products,
+    published where it can be checked. This section is dark because the hours it is
+    written in usually are.</p>
+    <form class="signup" onsubmit="event.preventDefault(); this.innerHTML=''; document.getElementById('ok').textContent='Thanks — this is a static demo, nothing was sent.'">
+      <input type="email" placeholder="you@example.com" aria-label="Email">
+      <button type="submit">Subscribe</button>
+    </form>
+    <div class="ok" id="ok"></div>
+  </div>
+</section>
+
+<footer>
+  <span>Unofficial concept · not affiliated with Anthropic</span>
+  <span>One file, no dependencies · Klaud artifact</span>
+</footer>
+</body>
+</html>`;
+
 function startMockProvider() {
   return new Promise((resolve) => {
     const server = http.createServer(async (req, res) => {
@@ -35,13 +140,54 @@ function startMockProvider() {
       }
 
       const body = JSON.parse(raw || '{}');
-      const toolResults = (body.messages || []).filter((m) => m.role === 'tool');
+      const messages = body.messages || [];
+
+      /* Tool results from THIS turn only. The conversation carries the first
+         turn's result into the second turn's request, and the two turns follow
+         different scripts — counting across the whole history would start the
+         second turn halfway through its own. */
+      const lastUserAt = messages.map((m) => m.role).lastIndexOf('user');
+      const prompt = String((messages[lastUserAt] && messages[lastUserAt].content) || '');
+      const toolResults = messages.slice(lastUserAt + 1).filter((m) => m.role === 'tool');
+      const refactorTurn = /refactor authentication/i.test(prompt);
 
       res.writeHead(200, { 'content-type': 'text/event-stream' });
       const w = (o) => res.write(`data: ${JSON.stringify(o)}\n\n`);
 
-      if (toolResults.length === 0) {
-        // Step 1: Explain and call edit_file
+      if (!refactorTurn && toolResults.length === 0) {
+        // Turn 1: describe the page, then write it — the write is what becomes
+        // the artifact card.
+        w({
+          model: 'nemotron-3.5-120b',
+          choices: [{ index: 0, delta: { content: ARTIFACT_LEDE } }],
+        });
+        w({
+          model: 'nemotron-3.5-120b',
+          choices: [{
+            index: 0,
+            delta: {
+              tool_calls: [{
+                index: 0,
+                id: 'call_artifact_1',
+                type: 'function',
+                function: {
+                  name: 'write_file',
+                  arguments: JSON.stringify({ path: 'anthropic-theme.html', content: ARTIFACT_HTML }),
+                },
+              }],
+            },
+          }],
+        });
+        w({ model: 'nemotron-3.5-120b', choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] });
+      } else if (!refactorTurn) {
+        w({
+          model: 'nemotron-3.5-120b',
+          choices: [{ index: 0, delta: { content:
+            'Built anthropic-theme.html — open the artifact to preview it. It is a single file: the toggle switches light and dark, the signup is wired to a demo handler, and the footer says plainly that this is a concept rather than an Anthropic site.' } }],
+        });
+        w({ model: 'nemotron-3.5-120b', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] });
+      } else if (toolResults.length === 0) {
+        // Refactor turn, step 1: Explain and call edit_file
         w({
           model: 'nemotron-3.5-120b',
           choices: [{
@@ -72,7 +218,7 @@ function startMockProvider() {
         });
         w({ model: 'nemotron-3.5-120b', choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] });
       } else if (toolResults.length === 1) {
-        // Step 2: Call run_command
+        // Refactor turn, step 2: Call run_command
         w({
           model: 'nemotron-3.5-120b',
           choices: [{
@@ -94,7 +240,7 @@ function startMockProvider() {
         });
         w({ model: 'nemotron-3.5-120b', choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] });
       } else {
-        // Step 3: Final confirmation
+        // Refactor turn, step 3: Final confirmation
         w({
           model: 'nemotron-3.5-120b',
           choices: [{
@@ -590,24 +736,58 @@ const SANITIZE_CODE = `
     await sleep(300);
 
     /* =====================================================================
-     * 7. ACTIVE TURN & TOOL CARDS (Real Verification Flow)
+     * 7. REAL TURNS — an artifact first, then the tool/diff turn
      * ===================================================================== */
-    console.log('\n--- Running Real Turn for Hero & Turn Screenshots ---');
-    await browser.evaluate(`
-      const box = document.getElementById('prompt');
-      box.value = 'Refactor authentication middleware to check token expiration and verify with tests';
-      box.dispatchEvent(new Event('input', { bubbles: true }));
-      document.getElementById('send').click();
-    `);
+    console.log('\n--- Running Real Turns for Hero & Turn Screenshots ---');
 
-    // Wait for the turn to complete
-    const deadline = Date.now() + 25000;
-    while (Date.now() < deadline) {
-      await sleep(500);
-      const streaming = await browser.evaluate(`return document.getElementById('send').classList.contains('stop');`);
-      if (!streaming) break;
+    const sendPrompt = async (text) => {
+      await browser.evaluate(`
+        const box = document.getElementById('prompt');
+        box.value = ${JSON.stringify(text)};
+        box.dispatchEvent(new Event('input', { bubbles: true }));
+        document.getElementById('send').click();
+      `);
+      const deadline = Date.now() + 30000;
+      while (Date.now() < deadline) {
+        await sleep(500);
+        const streaming = await browser.evaluate(`return document.getElementById('send').classList.contains('stop');`);
+        if (!streaming) break;
+      }
+      await sleep(1400);
+    };
+
+    /* 7a. The first prompt writes a page, and a written page is an artifact.
+       Refusing to continue if the card did not render: a marketing shot of a
+       feature that is not there is worse than no shot. */
+    await sendPrompt('Create an anthropic themed website in HTML');
+    const artifactCards = await browser.evaluate(`return document.querySelectorAll('.artifact').length;`);
+    if (artifactCards < 1) {
+      throw new Error('the artifact card did not render after the first prompt');
     }
-    await sleep(1500);
+    console.log(`  artifact card rendered (${artifactCards})`);
+
+    // Docs: the artifact open in the pane (1x DPR, light)
+    await browser.setViewport(1384, 905, 1);
+    await browser.evaluate(`document.getElementById('scroller').scrollTop = 0;`);
+    await sleep(300);
+    await browser.evaluate(`document.querySelector('.artifact-open')?.click();`);
+    await sleep(800);
+    await applySanitize('142 tokens this turn · Klaud runs real commands in my-project');
+    await browser.screenshot(path.join(docsShotDir, 'screenshot-artifact.png'));
+    await browser.evaluate(`document.querySelector('.ap-close')?.click();`);
+    await sleep(400);
+
+    // Marketing hero + OpenGraph: transcript scrolled to the first prompt, so
+    // the frame reads prompt → description → artifact card (2x DPR).
+    await browser.setViewport(1384, 905, 2);
+    await browser.evaluate(`document.getElementById('scroller').scrollTop = 0;`);
+    await sleep(300);
+    await applySanitize('142 tokens this turn · Klaud runs real commands in my-project');
+    await browser.screenshot(path.join(siteImgDir, 'hero.png'));
+    await browser.screenshot(path.join(PROJECT, 'site', 'og.png'));
+
+    /* 7b. The second prompt: diffs and real exit codes. */
+    await sendPrompt('Refactor authentication middleware to check token expiration and verify with tests');
 
     // Expand tool cards
     await browser.evaluate(`
@@ -615,26 +795,20 @@ const SANITIZE_CODE = `
     `);
     await applySanitize('186 tokens this turn · Klaud runs real commands in my-project');
 
-    // 7a. Docs screenshot-turn.png (1x DPR)
+    // Docs screenshot-turn.png (1x DPR)
     await browser.setViewport(1384, 905, 1);
     await applySanitize('186 tokens this turn · Klaud runs real commands in my-project');
     await browser.screenshot(path.join(docsShotDir, 'screenshot-turn.png'));
 
-    // 7b. Marketing hero.png (2x DPR Retina)
-    await browser.setViewport(1384, 905, 2);
-    await applySanitize('186 tokens this turn · Klaud runs real commands in my-project');
-    await browser.screenshot(path.join(siteImgDir, 'hero.png'));
-
-    // 7c. OpenGraph preview image (site/og.png, 2x DPR Retina)
-    await browser.screenshot(path.join(PROJECT, 'site', 'og.png'));
-
-    // 7d. Marketing tools.png (2x DPR Retina, width 1084)
+    // Marketing tools.png (2x DPR, width 1084)
     await browser.setViewport(1084, 905, 2);
     await applySanitize('186 tokens this turn · Klaud runs real commands in my-project');
     await browser.screenshot(path.join(siteImgDir, 'tools.png'));
     await browser.setViewport(1384, 905, 2);
 
-    // 7e. Dark mode: docs screenshot-dark.png (1x DPR) and marketing dark.png (2x DPR)
+    /* 7c. Dark mode: the transcript for the docs, the artifact pane open for
+       the marketing shot — the pane is the feature, so that is what the site
+       should show. */
     await browser.evaluate(`
       document.getElementById('toggle-theme').click();
     `);
@@ -645,6 +819,11 @@ const SANITIZE_CODE = `
     await browser.screenshot(path.join(docsShotDir, 'screenshot-dark.png'));
 
     await browser.setViewport(1384, 905, 2);
+    await browser.evaluate(`
+      document.getElementById('scroller').scrollTop = 0;
+      document.querySelector('.artifact-open')?.click();
+    `);
+    await sleep(900);
     await applySanitize('186 tokens this turn · Klaud runs real commands in my-project');
     await browser.screenshot(path.join(siteImgDir, 'dark.png'));
 

@@ -324,6 +324,33 @@ accent colour, and all of them are escaped rather than trusted.
   model      agnes-3.0-flash:free
 ```
 
+## Artifacts
+
+A file worth opening is not shown as a tool call. When the agent writes a
+document or code file — HTML, Markdown, SVG, CSS, JS/TS, JSON — the transcript
+renders an **artifact card** instead: the file's name, `Artifact · size · type`,
+and one `Open` button. A file that is merely produced (a log, a fixture, a
+config) keeps its tool card, because there the diff is the interesting part.
+
+`Open` opens a pane beside the transcript — Preview and Code tabs for a page,
+rendered and source views for Markdown, source for the rest. The preview is a
+sandboxed iframe (`allow-scripts`, no `allow-same-origin`), so a page with its
+own JavaScript runs without being able to reach the app, its session token, or
+`~/.klaud`. The artifact is a real file in your working directory; closing the
+pane with the button or Esc gives the transcript its full width back.
+
+![An artifact card with the pane open beside the transcript](docs/screenshots/screenshot-artifact.png)
+
+The prompt bar changes with the screen: the title screen keeps the one card
+with the chips inside it, and once there is a conversation the field stands
+alone — `+` (the skill list) at the left, the send circle at the right, both
+centred on the box, with the Chat/Cowork, permission, workspace and model chips
+in the row underneath.
+
+Covered by `test/browser.js`: the card replaces that write, the pane opens with
+working Preview and Code tabs, both files land on disk, the `+` opens the skill
+list, and a reload rebuilds the artifact from the saved conversation.
+
 ## Quick start
 
 **Windows** — double-click `start-klaud.cmd`

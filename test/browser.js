@@ -101,6 +101,21 @@ function startMock() {
                       arguments: JSON.stringify({ path: 'from-the-browser.txt', content: 'hello from a real click\n' }),
                     },
                   },
+                  // A written page is an artifact, not a tool card — this is the
+                  // file the pane opens, so the artifact path is covered by the
+                  // same turn as the plain-write path.
+                  {
+                    index: 1,
+                    id: 'b_call_2',
+                    type: 'function',
+                    function: {
+                      name: 'write_file',
+                      arguments: JSON.stringify({
+                        path: 'preview.html',
+                        content: '<!doctype html><html><body><h1>Preview</h1><p>hello from a real click</p></body></html>\n',
+                      }),
+                    },
+                  },
                 ],
               },
             },
@@ -443,6 +458,32 @@ class Browser {
     check('the composer is a softly rounded field, narrower in the empty state',
       layout.composerWidth >= 400 && layout.composerWidth <= 680 && parseFloat(String(layout.composerRadius)) >= 16,
       `width=${layout.composerWidth} radius=${layout.composerRadius}`);
+
+    /* ---- the title screen keeps the original prompt bar ----
+       Two bars exist by design: this screen is the old single card (chips and
+       send inside it, no +), and a conversation gets the field-style bar. The
+       seam is asserted as well — the field's bottom border is removed so the
+       row's box reads as one card rather than two stacked ones. */
+    const titleBar = await browser.evaluate(`
+      const cs = (sel, prop) => {
+        const n = document.querySelector(sel);
+        return n ? getComputedStyle(n)[prop] : null;
+      };
+      return {
+        attach: cs('.attach-btn', 'display'),
+        sendInRow: Boolean(document.querySelector('.composer-row #send')),
+        sendInField: Boolean(document.querySelector('.prompt-field #send')),
+        fieldBottom: cs('.composer', 'borderBottomWidth'),
+        rowBg: cs('.composer-row', 'backgroundColor'),
+        rowRadius: cs('.composer-row', 'borderBottomLeftRadius')
+      };
+    `);
+    check('the title screen keeps the old prompt bar: chips inside the card, no +',
+      titleBar.attach === 'none' && titleBar.sendInRow && !titleBar.sendInField &&
+        titleBar.fieldBottom === '0px' && titleBar.rowBg !== 'rgba(0, 0, 0, 0)',
+      JSON.stringify(titleBar));
+    check('...and the card is joined, not two stacked boxes',
+      parseFloat(String(titleBar.rowRadius)) >= 16, JSON.stringify(titleBar));
     check('the sidebar leads with New chat', layout.newChatFirst === true, String(layout.newChatFirst));
     check('the sidebar list is labelled like the reference',
       /chats and tasks/i.test(layout.sidebarLabel), layout.sidebarLabel);
@@ -510,7 +551,13 @@ class Browser {
       const r = (sel) => { const n = document.querySelector(sel); if (!n) return null; const b = n.getBoundingClientRect();
         return { t: Math.round(b.top), b: Math.round(b.bottom), h: Math.round(b.height) }; };
       const g = r('.welcome h1');
-      const c = r('.composer');
+      // The composer block is two elements on this screen — the field card and
+      // the chip row that joins it underneath. The wrap gives the bottom of the
+      // block for the centring measure; the top comes from the card itself, so
+      // the gap is the gap you can see rather than the wrap's padding.
+      const cw = r('.composer-wrap');
+      const card = r('.composer');
+      const c = { t: card.t, b: cw.b };
       const tb = r('.topbar');
       const group = r('.centre-group');
       // The content area is everything below the top bar; that is the space the
@@ -546,14 +593,23 @@ class Browser {
     /* ---------- prompt box size and position ---------- */
     const promptBox = await browser.evaluate(`
       const ta = document.getElementById('prompt');
-      const box = document.querySelector('.composer');
+      // On this screen the prompt box is the joined card: the field piece plus
+      // the chip row that joins it underneath. Measuring only the field element
+      // would measure half the card, since the row became its own element.
+      const box = document.querySelector('.composer').getBoundingClientRect();
+      const row = document.querySelector('.composer-row')?.getBoundingClientRect();
       const cs = getComputedStyle(ta);
       const h1 = document.querySelector('.welcome h1');
-      const rect = box.getBoundingClientRect();
+      const rect = {
+        left: Math.min(box.left, row ? row.left : box.left),
+        right: Math.max(box.right, row ? row.right : box.right),
+        top: Math.min(box.top, row ? row.top : box.top),
+        bottom: Math.max(box.bottom, row ? row.bottom : box.bottom)
+      };
       return {
         fontSize: parseFloat(cs.fontSize),
-        width: Math.round(rect.width),
-        height: Math.round(rect.height),
+        width: Math.round(rect.right - rect.left),
+        height: Math.round(rect.bottom - rect.top),
         greetingPct: Math.round((h1.getBoundingClientRect().top / innerHeight) * 100),
         scrollerFlexGrow: getComputedStyle(document.querySelector('.scroller')).flexGrow
       };
@@ -868,7 +924,7 @@ class Browser {
     /* ---------- type a message and send it ---------- */
     await browser.evaluate(`
       const box = document.getElementById('prompt');
-      box.value = 'Create from-the-browser.txt';
+      box.value = 'Create from-the-browser.txt and preview.html';
       box.dispatchEvent(new Event('input', { bubbles: true }));
       return true;
     `);
@@ -906,6 +962,10 @@ class Browser {
         toolOk: document.querySelector('details.tool')?.classList.contains('ok') ?? null,
         toolCardHeight: Math.round(document.querySelector('details.tool')?.getBoundingClientRect().height || 0),
         chevronHeight: Math.round(document.querySelector('details.tool .chev')?.getBoundingClientRect().height || 0),
+        artifactCards: document.querySelectorAll('.artifact').length,
+        artifactTitle: document.querySelector('.artifact .artifact-title')?.textContent || null,
+        artifactMeta: document.querySelector('.artifact .artifact-meta')?.textContent || null,
+        artifactHasOpen: Boolean(document.querySelector('.artifact .artifact-open')),
         notices: document.querySelectorAll('.notice.error').length,
         stillStreaming: document.getElementById('send').classList.contains('stop')
       };
@@ -914,17 +974,26 @@ class Browser {
     check('the debug hook exposes app state', turnState.booted === true);
     check('the user message rendered as a bubble', turnState.userBubbles === 1,
       JSON.stringify(turnState));
-    check('the typed text is in the bubble', turnState.userText === 'Create from-the-browser.txt',
+    check('the typed text is in the bubble', turnState.userText === 'Create from-the-browser.txt and preview.html',
       String(turnState.userText));
     check('the assistant reply streamed into the transcript', /writing the file now/i.test(String(turnState.proseText)),
       String(turnState.proseText));
-    check('the tool call rendered as exactly one card', turnState.toolCards === 1, `found ${turnState.toolCards}`);
+    check('the plain file write still renders a tool card', turnState.toolCards === 1, `found ${turnState.toolCards}`);
     check('the tool card names write_file', turnState.toolName === 'write_file', String(turnState.toolName));
     check('the tool card shows success', turnState.toolOk === true, JSON.stringify(turnState));
     check('the tool card is a sane height, not a stretched 300px icon',
       turnState.toolCardHeight > 20 && turnState.toolCardHeight < 120, `${turnState.toolCardHeight}px`);
     check('the chevron is a small icon, not a 300px default SVG',
       turnState.chevronHeight > 0 && turnState.chevronHeight <= 16, `${turnState.chevronHeight}px`);
+    /* The written page is the artifact: one card, named, with an Open button —
+       the shape the reference uses, replacing that write's tool card. */
+    check('the written page renders as an artifact card, not a tool card',
+      turnState.artifactCards === 1, `found ${turnState.artifactCards}`);
+    check('the artifact card names the file and says what it is',
+      turnState.artifactTitle === 'preview.html' &&
+        /^Artifact · /.test(String(turnState.artifactMeta)) &&
+        turnState.artifactHasOpen === true,
+      JSON.stringify({ title: turnState.artifactTitle, meta: turnState.artifactMeta }));
     check('no error notice was shown', turnState.notices === 0);
     check('the turn finished streaming', turnState.stillStreaming === false);
 
@@ -943,10 +1012,107 @@ class Browser {
     check('no console errors during the turn', browser.consoleMessages.length === 0,
       JSON.stringify(browser.consoleMessages));
 
+    /* ---------- after the first prompt, the bar switches to the field style ---------- */
+    const chatBar = await browser.evaluate(`
+      const field = document.querySelector('.prompt-field').getBoundingClientRect();
+      const rect = (sel) => {
+        const n = document.querySelector(sel);
+        if (!n) return null;
+        const r = n.getBoundingClientRect();
+        return { size: Math.round(r.width), centre: Math.round((r.top + r.height / 2 - field.top) * 10) / 10 };
+      };
+      return {
+        attach: getComputedStyle(document.querySelector('.attach-btn')).display,
+        sendInField: Boolean(document.querySelector('.prompt-field #send')),
+        sendInRow: Boolean(document.querySelector('.composer-row #send')),
+        rowInBox: Boolean(document.querySelector('.composer .composer-row')),
+        plus: rect('#attach-btn'),
+        send: rect('#send'),
+        fieldMid: Math.round(field.height / 2 * 10) / 10
+      };
+    `);
+    check('after the first prompt the bar becomes the field style: + and send inside, chips below',
+      chatBar.attach !== 'none' && chatBar.sendInField && !chatBar.sendInRow && !chatBar.rowInBox,
+      JSON.stringify(chatBar));
+    check('the + and the send circle are the same size and centred on the field',
+      chatBar.plus && chatBar.send && chatBar.plus.size === chatBar.send.size &&
+        Math.abs(chatBar.plus.centre - chatBar.fieldMid) <= 1.5 &&
+        Math.abs(chatBar.send.centre - chatBar.fieldMid) <= 1.5,
+      JSON.stringify(chatBar));
+
+    /* ---- the + is a working control, not a decoration ---- */
+    await browser.evaluate(`document.getElementById('attach-btn').click(); return true;`);
+    await sleep(700);
+    const plusMenu = await browser.evaluate(`
+      const menu = document.getElementById('skill-menu');
+      return {
+        open: Boolean(menu && !menu.hidden),
+        items: menu.querySelectorAll('.skill-item').length,
+        prompt: document.getElementById('prompt').value
+      };
+    `);
+    check('the + opens the skill list', plusMenu.open && plusMenu.items > 0 && plusMenu.prompt === '/',
+      JSON.stringify(plusMenu));
+    await browser.evaluate(`
+      const p = document.getElementById('prompt');
+      p.value = '';
+      p.dispatchEvent(new Event('input', { bubbles: true }));
+      return true;
+    `);
+    await sleep(300);
+
+    /* ---------- the artifact pane ---------- */
+    await browser.evaluate(`document.querySelector('.artifact-open')?.click(); return true;`);
+    await sleep(700);
+    const pane = await browser.evaluate(`
+      const p = document.getElementById('artifact-pane');
+      const frame = p.querySelector('.ap-frame');
+      return {
+        open: Boolean(p && !p.hidden && document.querySelector('.main').classList.contains('artifact-pane-open')),
+        title: p.querySelector('.ap-title')?.textContent || '',
+        tabs: p.querySelectorAll('[data-ap-tab]').length,
+        hasFrame: Boolean(frame),
+        preview: frame ? String(frame.getAttribute('srcdoc') || '') : ''
+      };
+    `);
+    check('the artifact opens in a pane beside the transcript',
+      pane.open && pane.title === 'preview.html' && pane.hasFrame && pane.tabs === 2 &&
+        /<!doctype html>/i.test(pane.preview),
+      JSON.stringify({ open: pane.open, title: pane.title, tabs: pane.tabs, preview: pane.preview.slice(0, 60) }));
+
+    await browser.evaluate(`document.querySelector('[data-ap-tab="code"]')?.click(); return true;`);
+    await sleep(400);
+    const codeTab = await browser.evaluate(`
+      const body = document.querySelector('.ap-body');
+      const pre = body.querySelector('.ap-code');
+      return { code: Boolean(pre), text: String(pre ? pre.textContent : '').slice(0, 60) };
+    `);
+    check('the Code tab shows the source', codeTab.code && /<!doctype html>/i.test(codeTab.text),
+      JSON.stringify(codeTab));
+
+    await browser.evaluate(`document.querySelector('.ap-close')?.click(); return true;`);
+    await sleep(300);
+    const paneClosed = await browser.evaluate(`
+      const p = document.getElementById('artifact-pane');
+      return {
+        hidden: Boolean(p.hidden),
+        widthRestored: !document.querySelector('.main').classList.contains('artifact-pane-open')
+      };
+    `);
+    check('closing the pane gives the transcript its full width back',
+      paneClosed.hidden && paneClosed.widthRestored, JSON.stringify(paneClosed));
+    check('no console errors after using the artifact pane', browser.consoleMessages.length === 0,
+      JSON.stringify(browser.consoleMessages));
+    check('no exceptions after using the artifact pane', browser.exceptions.length === 0,
+      browser.exceptions.join('\n'));
+
     /* ---------- did it really touch the disk? ---------- */
     const produced = await fs.readFile(path.join(workspace, 'from-the-browser.txt'), 'utf8').catch(() => null);
     check('the file exists on disk with the right contents',
       produced === 'hello from a real click\n', JSON.stringify(produced));
+    const producedPage = await fs.readFile(path.join(workspace, 'preview.html'), 'utf8').catch(() => null);
+    check('the artifact really wrote its file too',
+      Boolean(producedPage) && /<!doctype html>/i.test(producedPage), String(producedPage).slice(0, 80));
 
     const turnShot = await browser.screenshot(path.join(SHOT_DIR, 'screenshot-turn.png'));
 
@@ -970,8 +1136,8 @@ class Browser {
         stored.messages.some((m) => m.role === 'assistant') &&
         stored.messages.some((m) => m.role === 'tool'),
       JSON.stringify(stored && stored.messages.map((m) => m.role)));
-    check('the persisted assistant message kept its tool call',
-      Boolean(stored) && (stored.messages.find((m) => m.role === 'assistant')?.tool_calls || []).length === 1,
+    check('the persisted assistant message kept its tool calls',
+      Boolean(stored) && (stored.messages.find((m) => m.role === 'assistant')?.tool_calls || []).length === 2,
       JSON.stringify(stored && stored.messages.find((m) => m.role === 'assistant')));
 
     /* ---------- reload restores the transcript ---------- */
@@ -1623,10 +1789,10 @@ class Browser {
       String(cowork.model).length > 0 && cowork.model === cowork.configModel, JSON.stringify(cowork));
 
     /* ---- the row still holds together with one more control in it ---- */
-    // The composer row carries the mode switch, two chips, the model and send,
-    // and the working-directory path here is a long temp one: this is the most
-    // crowded the row ever gets, so it is the place to catch a label breaking
-    // over two lines ("auto-" / "run") now that a fourth control shares it.
+    // The composer row carries the mode switch, two chips and the model — send
+    // now lives inside the field — and the working-directory path here is a long
+    // temp one: this is the most crowded the row ever gets, so it is the place to
+    // catch a label breaking over two lines ("auto-" / "run").
     const chipRow = await browser.evaluate(`
       const chips = Array.from(document.querySelectorAll('.composer-row .chip-select'));
       const row = document.querySelector('.composer-row');

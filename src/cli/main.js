@@ -1,16 +1,16 @@
-﻿'use strict';
+'use strict';
 
 /**
- * Klaud CLI â€” argv parsing and dispatch.
+ * Klaud CLI — argv parsing and dispatch.
  *
  * Hand-rolled rather than a dependency: the whole parser is below, it has no
  * opinions the project did not ask for, and Klaud ships with zero packages.
  *
  * Resolution order for the first positional token:
- *   1. a known command            â†’ run it
- *   2. a near-miss of a command   â†’ refuse with a suggestion (a typo must not
+ *   1. a known command            → run it
+ *   2. a near-miss of a command   → refuse with a suggestion (a typo must not
  *                                   become a prompt that hits the network)
- *   3. anything else              â†’ the prompt itself, i.e. `klaud fix the test`
+ *   3. anything else              → the prompt itself, i.e. `klaud fix the test`
  */
 
 const { makePalette, defList } = require('./ui');
@@ -144,7 +144,7 @@ function helpText(c, topic) {
 
   if (topic === 'run') {
     return [
-      `${B('klaud run <prompt>')} â€” answer one prompt and exit`,
+      `${B('klaud run <prompt>')} — answer one prompt and exit`,
       '',
       defList(
         [
@@ -177,12 +177,12 @@ function helpText(c, topic) {
     ['chats', 'List saved sessions with their ids, for --resume'],
     ['doctor', 'Check Node, config, workspace and provider reachability'],
     ['serve', 'Start the web UI from this same install'],
-    ['help', 'help [command] â€” this text, or one command in detail'],
+    ['help', 'help [command] — this text, or one command in detail'],
     ['version', 'Print the version'],
   ];
 
   return [
-    `${B('Klaud CLI')} ${D(`v${pkg.version}`)} â€” a local coding agent in your terminal`,
+    `${B('Klaud CLI')} ${D(`v${pkg.version}`)} — a local coding agent in your terminal`,
     '',
     `${B('Usage')}`,
     `  ${A('$')} klaud                          interactive chat session`,
@@ -215,7 +215,7 @@ function helpText(c, topic) {
       c
     ),
     '',
-    D('Shares ~/.klaud with the Klaud web app â€” one config, two front ends.'),
+    D('Shares ~/.klaud with the Klaud web app — one config, two front ends.'),
   ].join('\n');
 }
 
@@ -262,7 +262,7 @@ async function main(argv) {
       if (topic && !COMMAND_NAMES.includes(topic)) {
         const guess = suggest(topic);
         process.stderr.write(
-          `Unknown command: ${topic}${guess ? ` â€” did you mean ${c.bold(guess)}?` : ''}\n`
+          `Unknown command: ${topic}${guess ? ` — did you mean ${c.bold(guess)}?` : ''}\n`
         );
         return 2;
       }

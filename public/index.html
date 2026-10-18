@@ -150,50 +150,63 @@
                A listbox rather than a div: the arrow keys move a real selection and
                screen readers announce it. -->
           <div class="skill-menu" id="skill-menu" role="listbox" aria-label="Skills" hidden></div>
+          <!-- The field is the box: add · text · send, nothing else — the chips
+               live on the row underneath, the way the reference puts its model
+               picker below the input rather than inside it. -->
           <div class="prompt-field">
-            <textarea id="prompt" rows="1" aria-label="Message Klaud" autocomplete="off" spellcheck="true"></textarea>
-            <!-- The hint is an overlay, not the textarea's `placeholder` attribute:
-                 an attribute cannot crossfade, and the two lines have to overlap
-                 during the transition. `aria-hidden` because the textarea already
-                 carries an accessible label; announcing both would say it twice. -->
-            <div class="prompt-hint" id="prompt-hint" aria-hidden="true">
-              <span class="hint-line is-on">Type / for skills</span>
-              <span class="hint-line">How can I help you today?</span>
+            <button class="attach-btn" id="attach-btn" type="button" aria-label="Add a skill" title="Add a skill">
+              <svg aria-hidden="true"><use href="#i-plus"/></svg>
+            </button>
+            <div class="prompt-input">
+              <textarea id="prompt" rows="1" aria-label="Message Klaud" autocomplete="off" spellcheck="true"></textarea>
+              <!-- The hint is an overlay, not the textarea's `placeholder` attribute:
+                   an attribute cannot crossfade, and the two lines have to overlap
+                   during the transition. `aria-hidden` because the textarea already
+                   carries an accessible label; announcing both would say it twice. -->
+              <div class="prompt-hint" id="prompt-hint" aria-hidden="true">
+                <span class="hint-line is-on">Type / for skills</span>
+                <span class="hint-line">How can I help you today?</span>
+              </div>
             </div>
-          </div>
-          <div class="composer-row">
-            <!-- Chat and Cowork share this one composer, so the mode is a small
-                 segmented control sitting with the other chips rather than a
-                 second screen. A radiogroup, not a div: Tab reaches it and both
-                 Enter and Space activate a segment. -->
-            <div class="mode-toggle" id="mode-toggle" role="radiogroup" aria-label="Mode: chat or Cowork">
-              <button type="button" class="mode-seg" id="mode-chat" data-mode="chat" role="radio" aria-checked="true">Chat</button>
-              <button type="button" class="mode-seg" id="mode-cowork" data-mode="cowork" role="radio" aria-checked="false">Cowork</button>
-            </div>
-            <button class="chip-select" id="composer-mode" title="Tool permissions">
-              <svg aria-hidden="true"><use href="#i-shield"/></svg>
-              <span id="composer-mode-label">auto</span>
-            </button>
-            <button class="chip-select" id="composer-workspace" title="Working directory">
-              <svg aria-hidden="true"><use href="#i-folder"/></svg>
-              <span id="composer-ws-label">…</span>
-            </button>
-            <div class="grow"></div>
-            <button class="chip-select model-chip" id="model-pill" title="Change model">
-              <span class="dot off" id="model-dot"></span>
-              <span class="name" id="model-name">no model</span>
-              <svg aria-hidden="true" class="chev"><use href="#i-chevron"/></svg>
-            </button>
             <button class="send-btn" id="send" aria-label="Send" disabled>
               <svg aria-hidden="true" id="send-icon"><use href="#i-send"/></svg>
             </button>
           </div>
+        </div>
+        <div class="composer-row">
+          <!-- Chat and Cowork share this one composer, so the mode is a small
+               segmented control sitting with the other chips rather than a
+               second screen. A radiogroup, not a div: Tab reaches it and both
+               Enter and Space activate a segment. -->
+          <div class="mode-toggle" id="mode-toggle" role="radiogroup" aria-label="Mode: chat or Cowork">
+            <button type="button" class="mode-seg" id="mode-chat" data-mode="chat" role="radio" aria-checked="true">Chat</button>
+            <button type="button" class="mode-seg" id="mode-cowork" data-mode="cowork" role="radio" aria-checked="false">Cowork</button>
+          </div>
+          <button class="chip-select" id="composer-mode" title="Tool permissions">
+            <svg aria-hidden="true"><use href="#i-shield"/></svg>
+            <span id="composer-mode-label">auto</span>
+          </button>
+          <button class="chip-select" id="composer-workspace" title="Working directory">
+            <svg aria-hidden="true"><use href="#i-folder"/></svg>
+            <span id="composer-ws-label">…</span>
+          </button>
+          <div class="grow"></div>
+          <button class="chip-select model-chip" id="model-pill" title="Change model">
+            <span class="dot off" id="model-dot"></span>
+            <span class="name" id="model-name">no model</span>
+            <svg aria-hidden="true" class="chev"><use href="#i-chevron"/></svg>
+          </button>
         </div>
         <div class="composer-hint" id="composer-hint">
           Enter to send · Shift+Enter for a new line · Klaud runs real commands in your working directory
         </div>
       </div>
     </div>
+
+    <!-- Artifacts open here: a pane beside the transcript, preview where one
+         exists and the source otherwise. Rendered by app.js; hidden until an
+         artifact is opened. -->
+    <aside class="artifact-pane" id="artifact-pane" hidden aria-label="Artifact"></aside>
   </main>
 </div>
 

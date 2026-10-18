@@ -94,6 +94,9 @@ const state = {
   usage: null,
   toolCount: 0,
   unauthorized: false,
+  // The open artifact, `{ id, tab }`, or null. The pane is a second view on a
+  // transcript item rather than a route, so it lives on the same state object.
+  artifact: null,
   // The greeting currently on screen, so a re-render does not reshuffle it.
   greeting: null,
   // 'chat' or 'cowork'. Chat is the default, so an install that has never seen
@@ -252,9 +255,25 @@ function formatTime(ms) {
  * the composer as one block. Kept in a single helper because the welcome is
  * rendered from three different places, and doing this inline in only one of
  * them left the other two with the un-centred layout.
+ *
+ * The two screens carry different prompt bars by design: the title screen is
+ * the old single card (chips inside it, send at the end of the row), and a
+ * conversation gets the field-style bar — add · text · send, chips underneath.
+ * The send button is the part that moves between them, so it moves here rather
+ * than being rendered twice with one hidden copy to keep in sync.
  */
 function setEmptyShell(empty) {
   document.querySelector('.app')?.classList.toggle('is-empty', empty);
+  positionSendButton(empty);
+}
+
+function positionSendButton(empty) {
+  const send = el('send');
+  const row = document.querySelector('.composer-row');
+  const field = document.querySelector('.prompt-field');
+  if (!send || !row || !field) return;
+  const target = empty ? row : field;
+  if (send.parentElement !== target) target.appendChild(send);
 }
 
 /**
@@ -669,6 +688,203 @@ function renderToolCard(call) {
 }
 
 /**
+ * Artifacts
+ *
+ * A file the agent wrote becomes an artifact — a card in the transcript that
+ * opens into a preview beside it — when it is something you would open to look
+ * at: a page, a rendered document, or code. A file that is merely produced (a
+ * log, a fixture, a config) stays a tool card, because there is nothing to
+ * preview and the diff answers the question better than a card would.
+ *
+ * The card is deliberately Claude-shaped: glyph, title, "Artifact · …" meta,
+ * and one Open button. It replaces the tool card for that write rather than
+ * sitting next to it — two records of one action is the thing this avoids.
+ */
+const ARTIFACT_KINDS = {
+  html: 'HTML',
+  htm: 'HTML',
+  md: 'Markdown',
+  markdown: 'Markdown',
+  svg: 'SVG',
+  css: 'CSS',
+  js: 'JavaScript',
+  mjs: 'JavaScript',
+  cjs: 'JavaScript',
+  ts: 'TypeScript',
+  jsx: 'TSX',
+  tsx: 'TSX',
+  json: 'JSON',
+};
+
+function formatBytes(n) {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** The artifact behind a finished write_file call, or null if it is not one. */
+function artifactInfo(call) {
+  if (!call || call.type !== 'tool' || call.name !== 'write_file') return null;
+  if (call.running || call.ok === false || call.denied) return null;
+
+  const rawPath = String((call.args && call.args.path) || '');
+  const content = call.args && typeof call.args.content === 'string' ? call.args.content : '';
+  if (!rawPath || !content) return null;
+
+  const ext = (rawPath.split('.').pop() || '').toLowerCase();
+  const kind = ARTIFACT_KINDS[ext];
+  if (!kind) return null;
+
+  const name = rawPath.split(/[\\/]/).pop();
+  return {
+    id: call.id,
+    path: rawPath,
+    name,
+    ext,
+    kind,
+    content,
+    bytes: new TextEncoder().encode(content).length,
+  };
+}
+
+/** 'page' renders in a frame, 'doc' as markdown, 'code' as source. */
+function artifactView(a) {
+  if (a.ext === 'html' || a.ext === 'htm' || a.ext === 'svg') return 'page';
+  if (a.ext === 'md' || a.ext === 'markdown') return 'doc';
+  return 'code';
+}
+
+function renderArtifactCard(call) {
+  const a = artifactInfo(call);
+  if (!a) return renderToolCard(call);
+  return `
+    <div class="artifact" data-artifact="${escapeHtml(a.id)}" data-open-artifact="${escapeHtml(a.id)}" title="${escapeHtml(a.path)} — in your working directory">
+      <span class="artifact-icon" aria-hidden="true">${icon('i-file')}</span>
+      <span class="artifact-text">
+        <span class="artifact-title">${escapeHtml(a.name)}</span>
+        <span class="artifact-meta">Artifact · ${escapeHtml(formatBytes(a.bytes))} · ${escapeHtml(a.kind)}</span>
+      </span>
+      <button class="artifact-open" type="button" aria-label="Open ${escapeHtml(a.name)}">
+        <span>Open</span>${icon('i-chevron')}
+      </button>
+    </div>`;
+}
+
+function findArtifactItem(id) {
+  for (const block of state.blocks) {
+    for (const item of block.items || []) {
+      if (item.type === 'tool' && item.id === id) return item;
+    }
+  }
+  return null;
+}
+
+function renderArtifactPane() {
+  const pane = el('artifact-pane');
+  const main = document.querySelector('.main');
+  if (!pane || !main) return;
+
+  const held = state.artifact ? findArtifactItem(state.artifact.id) : null;
+  const a = held ? artifactInfo(held) : null;
+  if (!a) {
+    state.artifact = null;
+    pane.hidden = true;
+    pane.innerHTML = '';
+    main.classList.remove('artifact-pane-open');
+    return;
+  }
+
+  const view = artifactView(a);
+  const tab = state.artifact.tab || 'preview';
+  const showCode = view === 'code' || tab === 'code';
+
+  const tabs =
+    view === 'page'
+      ? `<div class="ap-tabs" role="tablist" aria-label="Artifact view">
+           <button type="button" role="tab" data-ap-tab="preview" aria-selected="${showCode ? 'false' : 'true'}" class="${showCode ? '' : 'on'}">Preview</button>
+           <button type="button" role="tab" data-ap-tab="code" aria-selected="${showCode ? 'true' : 'false'}" class="${showCode ? 'on' : ''}">Code</button>
+         </div>`
+      : view === 'doc' && !showCode
+        ? `<div class="ap-tabs" role="tablist" aria-label="Artifact view">
+             <button type="button" role="tab" data-ap-tab="preview" aria-selected="true" class="on">Rendered</button>
+             <button type="button" role="tab" data-ap-tab="code" aria-selected="false">Markdown</button>
+           </div>`
+        : '';
+
+  let body;
+  if (showCode) {
+    body = `<pre class="ap-code">${escapeHtml(a.content)}</pre>`;
+  } else if (view === 'doc') {
+    body = `<div class="ap-doc prose">${renderMarkdown(a.content)}</div>`;
+  } else {
+    /* sandboxed without allow-same-origin: a preview can run its own scripts
+       but cannot reach this app, its session token, or ~/.klaud. */
+    body = `<iframe class="ap-frame" title="Preview of ${escapeHtml(a.name)}"
+             sandbox="allow-scripts allow-modals allow-forms allow-popups"
+             srcdoc="${escapeHtml(a.content)}"></iframe>`;
+  }
+
+  pane.hidden = false;
+  main.classList.add('artifact-pane-open');
+  pane.innerHTML = `
+    <div class="ap-head">
+      <div class="ap-titles">
+        <span class="ap-title">${escapeHtml(a.name)}</span>
+        <span class="ap-meta">Artifact · ${escapeHtml(formatBytes(a.bytes))} · ${escapeHtml(a.path)}</span>
+      </div>
+      ${tabs}
+      <button class="icon-btn ap-close" type="button" aria-label="Close artifact">${icon('i-close')}</button>
+    </div>
+    <div class="ap-body">${body}</div>`;
+
+  if (view === 'doc' && !showCode) decorateCodeBlocks(pane.querySelector('.ap-doc') || pane);
+}
+
+function openArtifact(id) {
+  const item = findArtifactItem(id);
+  if (!item || !artifactInfo(item)) return;
+  state.artifact = { id, tab: 'preview' };
+  renderArtifactPane();
+  const close = document.querySelector('.ap-close');
+  if (close) close.focus({ preventScroll: true });
+}
+
+function closeArtifact() {
+  if (!state.artifact) return;
+  const id = state.artifact.id;
+  state.artifact = null;
+  renderArtifactPane();
+  document.querySelector(`[data-open-artifact="${CSS.escape(id)}"] .artifact-open`)?.focus({ preventScroll: true });
+}
+
+function wireArtifactCards() {
+  dom.messages.querySelectorAll('[data-open-artifact]').forEach((node) => {
+    node.addEventListener('click', () => openArtifact(node.getAttribute('data-open-artifact')));
+  });
+}
+
+/** One delegated listener for the pane: it is re-rendered on every view change. */
+function wireArtifactPane() {
+  const pane = el('artifact-pane');
+  if (!pane) return;
+  pane.addEventListener('click', (event) => {
+    const tab = event.target.closest('[data-ap-tab]');
+    if (tab && state.artifact) {
+      state.artifact.tab = tab.getAttribute('data-ap-tab');
+      renderArtifactPane();
+      return;
+    }
+    if (event.target.closest('.ap-close')) closeArtifact();
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || !state.artifact) return;
+    // A modal above the pane owns Escape while it is open.
+    if (el('modal-root')?.innerHTML) return;
+    closeArtifact();
+  });
+}
+
+/**
  * The row shown while the model is working but has not said anything yet.
  *
  * Without this a turn starts as a blank column: the assistant block has no text,
@@ -742,7 +958,9 @@ function renderBlock(block) {
           <div class="body">${escapeHtml(item.text)}</div>
         </details>`);
     } else if (item.type === 'tool') {
-      parts.push(renderToolCard(item));
+      // A written document or code file shows as an artifact; everything else
+      // keeps the tool card.
+      parts.push(artifactInfo(item) ? renderArtifactCard(item) : renderToolCard(item));
     } else if (item.type === 'notice') {
       const level = item.level === 'error' ? 'error' : item.level === 'warn' ? 'warn' : 'info';
       const iconId = level === 'error' ? 'i-x' : level === 'warn' ? 'i-warn' : 'i-info';
@@ -796,6 +1014,10 @@ function renderTranscript() {
   dom.messages.innerHTML = state.blocks.map(renderBlock).join('');
   dom.messages.querySelectorAll('.prose pre[data-lang]').forEach((pre) => decorateCodeBlocks(pre.parentElement || dom.messages));
   wireApprovalButtons();
+  wireArtifactCards();
+  // The open pane is a view on a transcript item; a re-render of the transcript
+  // does not close it, but its item may have moved, so repaint it in place.
+  if (state.artifact) renderArtifactPane();
   scrollToBottom();
 }
 
@@ -811,17 +1033,26 @@ function patchStreamingText(item) {
 }
 
 function patchToolCard(call) {
-  let node = dom.messages.querySelector(`details[data-tool="${CSS.escape(call.id)}"]`);
+  // The result is what decides whether this is an artifact, so the node under
+  // the cursor can be a tool card that has just become one — or the reverse, if
+  // a rewrite dropped the content. Both selectors are tried before falling back
+  // to a full re-render.
+  const asArtifact = artifactInfo(call);
+  const toolSel = `details[data-tool="${CSS.escape(call.id)}"]`;
+  const artifactSel = `[data-artifact="${CSS.escape(call.id)}"]`;
+  let node = dom.messages.querySelector(asArtifact ? artifactSel : toolSel);
+  if (!node) node = dom.messages.querySelector(asArtifact ? toolSel : artifactSel);
   if (!node) {
     renderTranscript();
     return;
   }
+
   const holder = document.createElement('div');
-  holder.innerHTML = renderToolCard(call);
+  holder.innerHTML = asArtifact ? renderArtifactCard(call) : renderToolCard(call);
   const fresh = holder.firstElementChild;
-  const wasOpen = node.open;
-  fresh.open = wasOpen || call.ok === false;
+  if ('open' in fresh && 'open' in node) fresh.open = node.open || call.ok === false;
   node.replaceWith(fresh);
+  if (asArtifact) wireArtifactCards();
 
   // A finished tool call is followed by another wait while the model reads the
   // result, so the trailing working indicator has to appear now. Patching only
@@ -1539,6 +1770,9 @@ async function openChat(id) {
     state.blocks = blocksFromMessages(state.messages);
     state.usage = null;
     state.toolCount = 0;
+    // The pane belongs to the chat it was opened from.
+    state.artifact = null;
+    renderArtifactPane();
     history.replaceState(null, '', `#chat=${id}`);
     renderChatList();
     renderTranscript();
@@ -1558,6 +1792,8 @@ function newChat() {
   state.title = '';
   state.messages = [];
   state.blocks = [];
+  state.artifact = null;
+  renderArtifactPane();
   // A new chat is a new moment, so it earns a fresh greeting. The same chat
   // keeps the one it started with.
   state.greeting = null;
@@ -3575,6 +3811,23 @@ function cycleMode() {
  * ------------------------------------------------------------------ */
 
 function wireEvents() {
+  wireArtifactPane();
+
+  /* The + offers the same thing typing "/" offers: the skill list, without
+     asking anyone to know the slash exists. It only inserts the slash on an
+     empty field — over existing text the button is a focus, not an edit. */
+  el('attach-btn')?.addEventListener('click', () => {
+    if (skillMenuOpen()) {
+      closeSkillMenu();
+      return;
+    }
+    if (!dom.prompt.value) {
+      dom.prompt.value = '/';
+      dom.prompt.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    dom.prompt.focus();
+  });
+
   dom.prompt.addEventListener('input', () => {
     autosize();
     renderChrome();

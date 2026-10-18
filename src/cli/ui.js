@@ -1,7 +1,7 @@
-﻿'use strict';
+'use strict';
 
 /**
- * Klaud CLI â€” terminal presentation.
+ * Klaud CLI — terminal presentation.
  *
  * Colour, symbols, wrapping, spinners and prompts. Everything degrades
  * honestly: when the stream is not a TTY, or NO_COLOR is set, the ANSI codes
@@ -53,16 +53,16 @@ function makePalette(stream) {
 /* ------------------------------ symbols ------------------------------- */
 
 const sym = {
-  ok: 'âœ“',
-  fail: 'âœ—',
-  arrow: 'â†’',
-  bullet: 'â€¢',
+  ok: '✓',
+  fail: '✗',
+  arrow: '→',
+  bullet: '•',
   warn: '!',
-  dot: 'Â·',
-  prompt: 'â¯',
-  chevron: 'â€º',
-  check: '[âœ“]',
-  cross: '[âœ—]',
+  dot: '·',
+  prompt: '❯',
+  chevron: '›',
+  check: '[✓]',
+  cross: '[✗]',
 };
 
 /* ------------------------------- output ------------------------------- */
@@ -124,7 +124,7 @@ function defList(rows, c, totalWidth = 78, labelWidth = 22) {
 /* ------------------------------ spinner ------------------------------- */
 
 function spinner(stream, c, text) {
-  const frames = ['â ‹', 'â ™', 'â ¹', 'â ¸', 'â ¼', 'â ´', 'â ¦', 'â §', 'â ‡', 'â '];
+  const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
   let i = 0;
   let timer = null;
   let visible = false;
@@ -146,7 +146,7 @@ function spinner(stream, c, text) {
         if (timer.unref) timer.unref();
       } else if (stream) {
         // Not a TTY: no animation, but say something is happening exactly once.
-        stream.write(`${text}â€¦\n`);
+        stream.write(`${text}…\n`);
         visible = true;
       }
     },
@@ -191,7 +191,7 @@ function ask(question, { input = process.stdin, output = process.stdout, def = '
   });
 }
 
-/** Read a line without echoing it â€” for API keys. */
+/** Read a line without echoing it — for API keys. */
 function secret(question, { input = process.stdin, output = process.stdout } = {}) {
   return new Promise((resolve) => {
     const rl = readline.createInterface({ input, output, terminal: Boolean(input.isTTY) });

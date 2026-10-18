@@ -1,12 +1,12 @@
-﻿'use strict';
+'use strict';
 
 /**
- * Klaud CLI â€” running one turn.
+ * Klaud CLI — running one turn.
  *
  * The web server does this over SSE with an approval bridge; here the same
  * work happens in-process: load settings, expand a slash command, call
  * runAgentTurn, persist the messages it returns. Nothing about the agent loop
- * is re-implemented â€” the CLI is a different front end on the same engine.
+ * is re-implemented — the CLI is a different front end on the same engine.
  */
 
 const store = require('../store');
@@ -28,7 +28,7 @@ function isLoopback(baseUrl) {
 
 /**
  * Settings for this invocation: stored config plus whatever the flags
- * override. Flags never write to disk â€” a one-off `--model` must not change
+ * override. Flags never write to disk — a one-off `--model` must not change
  * the model for the next session.
  */
 async function loadSettings(flags = {}) {
@@ -79,9 +79,9 @@ function promptFor(prompt) {
 /**
  * Approvals, terminal edition.
  *
- * Single keypress, no Enter: y allow once Â· n deny Â· a allow for the rest of
- * this session Â· r switch the session to read-only. "a" and "r" mutate
- * `session.approvalMode`, which is exactly what the in-app buttons do â€” the
+ * Single keypress, no Enter: y allow once · n deny · a allow for the rest of
+ * this session · r switch the session to read-only. "a" and "r" mutate
+ * `session.approvalMode`, which is exactly what the in-app buttons do — the
  * difference is only where the answer is typed.
  */
 function makeApproval({ c, interactive, session }) {
