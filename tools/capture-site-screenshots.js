@@ -1,7 +1,13 @@
 /**
  * capture-site-screenshots.js
- * Generates pixel-perfect Retina (2x DPR) screenshots of the current Klaud app
- * for the marketing website (site/img/).
+ * Generates sanitized, pixel-perfect screenshots of the Klaud app
+ * for both documentation (docs/screenshots/) and marketing (site/img/ and site/og.png).
+ *
+ * Privacy Guarantees:
+ * - NO private chats: sidebar always displays the clean default empty state
+ *   ("No conversations yet. Your chats are saved locally.")
+ * - NO personal machine paths: workspace is masked to "my-project" and dataDir to "~/.klaud"
+ * - NO usernames or temporary directory identifiers anywhere in the captures.
  */
 
 const http = require('http');
@@ -148,6 +154,15 @@ class CDPClient {
     return res.result.value;
   }
 
+  async setViewport(width, height, deviceScaleFactor = 2) {
+    await this.send('Emulation.setDeviceMetricsOverride', {
+      width,
+      height,
+      deviceScaleFactor,
+      mobile: false,
+    });
+  }
+
   async screenshot(outFile, options = {}) {
     const shot = await this.send('Page.captureScreenshot', {
       format: 'png',
@@ -155,7 +170,7 @@ class CDPClient {
       ...options,
     });
     await fs.writeFile(outFile, Buffer.from(shot.data, 'base64'));
-    console.log(`  Saved screenshot: ${outFile}`);
+    console.log(`  Saved screenshot: ${path.relative(PROJECT, outFile)}`);
   }
 
   async close() {
@@ -206,17 +221,53 @@ async function launchBrowser(port) {
   client.profile = profile;
   await client.send('Page.enable');
   await client.send('Runtime.enable');
-  await client.send('Emulation.setDeviceMetricsOverride', {
-    width: 1384,
-    height: 905,
-    deviceScaleFactor: 2,
-    mobile: false,
-  });
   return client;
 }
 
+const SANITIZE_CODE = `
+  // 1. Sidebar - always pristine empty state, absolutely NO mock or private chats
+  const chatList = document.getElementById('chat-list');
+  if (chatList) {
+    chatList.innerHTML = '<div class="chat-list-empty">No conversations yet. Your chats are saved locally.</div>';
+  }
+
+  // 2. Workspace indicators - always generic "my-project"
+  const ws = document.getElementById('ws-path');
+  if (ws) ws.textContent = 'my-project';
+  const composerWs = document.getElementById('composer-ws-label');
+  if (composerWs) composerWs.textContent = 'my-project';
+  const model = document.getElementById('model-name');
+  if (model) model.textContent = 'nemotron-3.5-120b';
+
+  // 3. Settings inputs & paths
+  const sWs = document.getElementById('s-workspace');
+  if (sWs) sWs.value = 'my-project';
+  const sBase = document.getElementById('s-base');
+  if (sBase && sBase.value.includes('127.0.0.1')) {
+    sBase.value = 'http://127.0.0.1:20128/v1';
+  }
+
+  // 4. Sanitize all machine paths in code elements
+  document.querySelectorAll('code').forEach(c => {
+    if (c.textContent.includes('settings.json')) {
+      c.textContent = '~/.klaud/settings.json';
+    }
+  });
+
+  // 5. Sanitize any stray path text in hints or setup text
+  document.querySelectorAll('.conn-setup-where, .hint').forEach(el => {
+    if (el.innerHTML.includes('settings.json')) {
+      el.innerHTML = el.innerHTML
+        .replace(/in &lt;code&gt;[^<]+settings\.json/g, 'in &lt;code&gt;~/.klaud/settings.json')
+        .replace(/in <code>[^<]+settings\.json/g, 'in <code>~/.klaud/settings.json')
+        .replace(/to &lt;code&gt;[^<]+settings\.json/g, 'to &lt;code&gt;~/.klaud/settings.json')
+        .replace(/to <code>[^<]+settings\.json/g, 'to <code>~/.klaud/settings.json');
+    }
+  });
+`;
+
 (async () => {
-  console.log('Capturing authentic current app screenshots...');
+  console.log('Generating sanitized screenshots (zero private chats, zero personal paths)...');
   const mock = await startMockProvider();
   const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'klaud-shot-data-'));
   const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'klaud-shot-ws-'));
@@ -224,6 +275,8 @@ async function launchBrowser(port) {
   // Pre-seed realistic workspace files
   await fs.mkdir(path.join(workspace, 'src'), { recursive: true });
   await fs.mkdir(path.join(workspace, 'test'), { recursive: true });
+  await fs.mkdir(path.join(workspace, '.klaud', 'skills', 'house-style'), { recursive: true });
+
   await fs.writeFile(
     path.join(workspace, 'src', 'auth.js'),
     `// Session authentication middleware\nmodule.exports = function authMiddleware(req, res, next) {\n  const token = req.headers['authorization'];\n  if (!token) return res.writeHead(401).end();\n  next();\n};\n`
@@ -236,8 +289,12 @@ async function launchBrowser(port) {
     path.join(workspace, 'package.json'),
     JSON.stringify({ name: 'my-project', version: '1.0.0' }, null, 2)
   );
+  await fs.writeFile(
+    path.join(workspace, '.klaud', 'skills', 'house-style', 'SKILL.md'),
+    `---\nname: house-style\ndescription: House conventions for any file in this project. Use when writing or reviewing code here.\ndisable-model-invocation: true\n---\n\nHouse style.\n`
+  );
 
-  // Pre-populate settings
+  // Pre-populate settings without any mock chats
   await fs.writeFile(
     path.join(dataDir, 'settings.json'),
     JSON.stringify(
@@ -255,19 +312,8 @@ async function launchBrowser(port) {
     )
   );
 
-  // Pre-populate other chats in sidebar
+  // Ensure dataDir/chats is empty directory
   await fs.mkdir(path.join(dataDir, 'chats'), { recursive: true });
-  const otherChats = [
-    { id: 'chat-rate-limit', title: 'Add rate-limiting to API routes', time: Date.now() - 3600000 * 2 },
-    { id: 'chat-docker-setup', title: 'Setup Docker multi-stage build', time: Date.now() - 3600000 * 24 },
-    { id: 'chat-websocket-backoff', title: 'Fix WebSocket reconnect backoff', time: Date.now() - 3600000 * 48 },
-  ];
-  for (const c of otherChats) {
-    await fs.writeFile(
-      path.join(dataDir, 'chats', `${c.id}.json`),
-      JSON.stringify({ id: c.id, title: c.title, created: c.time, updated: c.time, messages: [] })
-    );
-  }
 
   // Start Klaud server
   const serverPort = 24894;
@@ -289,44 +335,264 @@ async function launchBrowser(port) {
     await browser.send('Page.navigate', { url: appUrl });
     await sleep(2000);
 
-    const imgDir = path.join(PROJECT, 'site', 'img');
+    const siteImgDir = path.join(PROJECT, 'site', 'img');
+    const docsShotDir = path.join(PROJECT, 'docs', 'screenshots');
+    await fs.mkdir(siteImgDir, { recursive: true });
+    await fs.mkdir(docsShotDir, { recursive: true });
 
-    // Clean display labels
-    const fixLabels = `
-      const ws = document.getElementById('ws-path');
-      if (ws) ws.textContent = 'my-project';
-      const composerWs = document.getElementById('composer-ws-label');
-      if (composerWs) composerWs.textContent = 'my-project';
-      const model = document.getElementById('model-name');
-      if (model) model.textContent = 'nemotron-3.5-120b';
-      const hint = document.getElementById('composer-hint');
-      if (hint && hint.textContent.includes('tokens')) {
-        hint.textContent = '186 tokens this turn · Klaud runs real commands in my-project';
+    // Helper to apply sanitization and optional composer hint
+    const applySanitize = async (hintText = null) => {
+      await browser.evaluate(`
+        ${SANITIZE_CODE}
+        const h = document.getElementById('composer-hint');
+        if (h && ${JSON.stringify(hintText)}) {
+          h.textContent = ${JSON.stringify(hintText)};
+        }
+      `);
+    };
+
+    /* =====================================================================
+     * 1. WELCOME & GREETING SCREENSHOTS (Chat Mode Empty State)
+     * ===================================================================== */
+    console.log('\n--- Capturing Welcome & Greeting Screenshots ---');
+    await browser.setViewport(1384, 905, 1);
+
+    // 1a. Standard welcome
+    await browser.evaluate(`
+      const h1 = document.querySelector('.welcome h1 span');
+      if (h1) h1.innerHTML = 'Here we go!';
+    `);
+    await applySanitize('Enter to send · Shift+Enter for a new line · Klaud runs real commands in my-project');
+    await browser.screenshot(path.join(docsShotDir, 'screenshot-welcome.png'));
+
+    // 1b. Morning greeting ("Coffee and Klaud time?")
+    await browser.setViewport(1384, 725, 1);
+    await browser.evaluate(`
+      const h1 = document.querySelector('.welcome h1 span');
+      if (h1) h1.innerHTML = 'Coffee and <span class="accent">Klaud</span> time?';
+    `);
+    await applySanitize('Enter to send · Shift+Enter for a new line · Klaud runs real commands in my-project');
+    await browser.screenshot(path.join(docsShotDir, 'greeting-morning.png'));
+
+    // 1c. Midday greeting ("What are we working on?")
+    await browser.evaluate(`
+      const h1 = document.querySelector('.welcome h1 span');
+      if (h1) h1.innerHTML = 'What are we <span class="accent">working</span> on?';
+    `);
+    await applySanitize('Enter to send · Shift+Enter for a new line · Klaud runs real commands in my-project');
+    await browser.screenshot(path.join(docsShotDir, 'greeting-midday.png'));
+
+    // 1d. Evening greeting ("Evening thoughts?")
+    await browser.evaluate(`
+      const h1 = document.querySelector('.welcome h1 span');
+      if (h1) h1.innerHTML = 'Evening <span class="accent">thoughts</span>?';
+    `);
+    await applySanitize('Enter to send · Shift+Enter for a new line · Klaud runs real commands in my-project');
+    await browser.screenshot(path.join(docsShotDir, 'greeting-evening.png'));
+
+    // 1e. Late night greeting ("Late night coding?")
+    await browser.evaluate(`
+      const h1 = document.querySelector('.welcome h1 span');
+      if (h1) h1.innerHTML = 'Late night <span class="accent">coding</span>?';
+    `);
+    await applySanitize('Enter to send · Shift+Enter for a new line · Klaud runs real commands in my-project');
+    await browser.screenshot(path.join(docsShotDir, 'greeting-late-night.png'));
+
+    /* =====================================================================
+     * 2. PROMPT HINT & SKILL MENU SCREENSHOTS
+     * ===================================================================== */
+    console.log('\n--- Capturing Prompt Hint & Skill Menu Screenshots ---');
+    await browser.setViewport(1384, 905, 1);
+
+    // 2a. Prompt hint ("Type / for skills")
+    await browser.evaluate(`
+      const h1 = document.querySelector('.welcome h1 span');
+      if (h1) h1.innerHTML = 'Here we go!';
+      const prompt = document.getElementById('prompt');
+      prompt.value = '';
+      prompt.dispatchEvent(new Event('input', { bubbles: true }));
+      const hint = document.getElementById('prompt-hint');
+      if (hint) {
+        hint.classList.remove('is-off');
+        const lines = hint.querySelectorAll('.hint-line');
+        if (lines[0]) lines[0].classList.add('is-on');
       }
-    `;
-    await browser.evaluate(fixLabels);
+    `);
+    await applySanitize('Enter to send · Shift+Enter for a new line · Klaud runs real commands in my-project');
+    await browser.screenshot(path.join(docsShotDir, 'screenshot-prompt-hint.png'));
 
-    // 1. Capture WELCOME screenshot (Chat mode with Anthropic Serif font)
-    await browser.evaluate(fixLabels);
-    await browser.screenshot(path.join(imgDir, 'hero-welcome.png'));
-    console.log('✓ hero-welcome.png captured');
+    // 2b. Skill menu open (Light Mode)
+    await browser.evaluate(`
+      const prompt = document.getElementById('prompt');
+      prompt.value = '/';
+      prompt.dispatchEvent(new Event('input', { bubbles: true }));
+    `);
+    await sleep(400);
+    await applySanitize('Enter to send · Shift+Enter for a new line · Klaud runs real commands in my-project');
+    await browser.screenshot(path.join(docsShotDir, 'screenshot-skill-menu.png'));
 
-    // 2. Capture COWORK screenshot (Cowork mode with Anthropic Serif font and Cowork starter cards)
+    // 2c. Skill menu open (Dark Mode)
+    await browser.evaluate(`
+      document.getElementById('toggle-theme').click();
+    `);
+    await sleep(400);
+    await applySanitize('Enter to send · Shift+Enter for a new line · Klaud runs real commands in my-project');
+    await browser.screenshot(path.join(docsShotDir, 'screenshot-skill-menu-dark.png'));
+
+    // Switch back to light mode and clear prompt
+    await browser.evaluate(`
+      document.getElementById('toggle-theme').click();
+      const prompt = document.getElementById('prompt');
+      prompt.value = '';
+      prompt.dispatchEvent(new Event('input', { bubbles: true }));
+    `);
+    await sleep(300);
+
+    /* =====================================================================
+     * 3. COWORK MODE SCREENSHOTS
+     * ===================================================================== */
+    console.log('\n--- Capturing Cowork Mode Screenshots ---');
     await browser.evaluate(`
       document.getElementById('mode-cowork').click();
+      const h1 = document.querySelector('.welcome h1 span');
+      if (h1) h1.innerHTML = 'Here we go!';
     `);
-    await sleep(800);
-    await browser.evaluate(fixLabels);
-    await browser.screenshot(path.join(imgDir, 'cowork.png'));
-    console.log('✓ cowork.png updated');
+    await sleep(600);
+    await applySanitize('Cowork — longer tasks, it plans and works through them step by step.');
+
+    // 3a. Docs cowork composer (1x DPR)
+    await browser.setViewport(1384, 905, 1);
+    await applySanitize('Cowork — longer tasks, it plans and works through them step by step.');
+    await browser.screenshot(path.join(docsShotDir, 'screenshot-cowork-composer.png'));
+
+    // 3b. Marketing site cowork (2x DPR Retina)
+    await browser.setViewport(1384, 905, 2);
+    await applySanitize('Cowork — longer tasks, it plans and works through them step by step.');
+    await browser.screenshot(path.join(siteImgDir, 'cowork.png'));
 
     // Switch back to Chat mode
     await browser.evaluate(`
       document.getElementById('mode-chat').click();
     `);
-    await sleep(500);
+    await sleep(400);
 
-    // 3. Execute a turn to capture the active chat with tool cards and diffs!
+    /* =====================================================================
+     * 4. SETTINGS & CONNECTIONS MODALS
+     * ===================================================================== */
+    console.log('\n--- Capturing Settings & Connections Screenshots ---');
+    await browser.setViewport(1384, 905, 1);
+
+    // Open settings modal
+    await browser.evaluate(`
+      document.getElementById('open-settings-top').click();
+    `);
+    await sleep(500);
+    await applySanitize();
+    await browser.screenshot(path.join(docsShotDir, 'screenshot-settings.png'));
+
+    // Connections panel inside settings
+    await browser.evaluate(`
+      const panel = document.querySelector('[data-conn-panel]');
+      if (panel) panel.scrollIntoView();
+    `);
+    await sleep(400);
+    await applySanitize();
+    await browser.screenshot(path.join(docsShotDir, 'screenshot-connections.png'));
+
+    // Close settings modal
+    await browser.evaluate(`
+      document.querySelector('.overlay [data-close]')?.click();
+    `);
+    await sleep(300);
+
+    /* =====================================================================
+     * 5. FREE PROVIDERS & CLOUDFLARE SETUP MODALS
+     * ===================================================================== */
+    console.log('\n--- Capturing Free Providers & Setup Screenshots ---');
+    await browser.evaluate(`
+      document.getElementById('open-free').click();
+    `);
+    await sleep(6000);
+    await applySanitize();
+    await browser.screenshot(path.join(docsShotDir, 'screenshot-free-providers.png'));
+
+    // Cloudflare guided setup panel
+    await browser.evaluate(`
+      const cards = Array.from(document.querySelectorAll('.pcard'));
+      const cf = cards.find(c => c.querySelector('.pname')?.textContent.includes('Cloudflare'));
+      if (cf) {
+        cf.scrollIntoView();
+        cf.querySelector('[data-setup-open]')?.click();
+      }
+    `);
+    await sleep(800);
+    await applySanitize();
+    await browser.screenshot(path.join(docsShotDir, 'screenshot-cloudflare-setup.png'));
+
+    // Bad token error readout
+    await browser.evaluate(`
+      const panel = document.querySelector('.setup-panel');
+      if (panel) {
+        const tok = panel.querySelector('[data-setup-token]');
+        if (tok) tok.value = 'invalid-token-test';
+        const acc = panel.querySelector('[data-setup-account-input]');
+        if (acc) acc.value = 'abcdef0123456789abcdef0123456789';
+        panel.querySelector('[data-setup-run]')?.click();
+      }
+    `);
+    await sleep(4000);
+    await applySanitize();
+    await browser.screenshot(path.join(docsShotDir, 'screenshot-cloudflare-error.png'));
+
+    // Close free providers overlay
+    await browser.evaluate(`
+      document.querySelector('.overlay [data-close]')?.click();
+    `);
+    await sleep(400);
+
+    /* =====================================================================
+     * 6. THINKING STATE SCREENSHOT
+     * ===================================================================== */
+    console.log('\n--- Capturing Thinking State Screenshot ---');
+    await browser.setViewport(1384, 805, 1);
+    await browser.evaluate(`
+      const shell = document.querySelector('.shell');
+      if (shell) shell.classList.remove('has-no-transcript');
+      const messages = document.getElementById('messages');
+      if (messages) {
+        messages.innerHTML = \`
+          <div class="turn user">
+            <div class="bubble bubble-user">list files in my-project</div>
+          </div>
+          <div class="turn assistant">
+            <div class="thinking-row" data-thinking aria-live="polite">
+              <span class="tr-indicator"><span class="tr-dot"></span><span class="tr-dot"></span><span class="tr-dot"></span></span>
+              <span class="tr-label" data-thinking-label>Thinking · step 1/4</span>
+            </div>
+          </div>
+        \`;
+      }
+      const send = document.getElementById('send');
+      if (send) send.className = 'send stop';
+    `);
+    await applySanitize('Working... 0 tool calls so far · press Stop to cancel');
+    await browser.screenshot(path.join(docsShotDir, 'screenshot-thinking.png'));
+
+    // Reset messages and send button
+    await browser.evaluate(`
+      const shell = document.querySelector('.shell');
+      if (shell) shell.classList.add('has-no-transcript');
+      const messages = document.getElementById('messages');
+      if (messages) messages.innerHTML = '';
+      const send = document.getElementById('send');
+      if (send) send.className = 'send';
+    `);
+    await sleep(300);
+
+    /* =====================================================================
+     * 7. ACTIVE TURN & TOOL CARDS (Real Verification Flow)
+     * ===================================================================== */
+    console.log('\n--- Running Real Turn for Hero & Turn Screenshots ---');
     await browser.evaluate(`
       const box = document.getElementById('prompt');
       box.value = 'Refactor authentication middleware to check token expiration and verify with tests';
@@ -343,30 +609,46 @@ async function launchBrowser(port) {
     }
     await sleep(1500);
 
-    // Expand tool cards and fix labels
+    // Expand tool cards
     await browser.evaluate(`
       document.querySelectorAll('details.tool').forEach(d => d.open = true);
-      ${fixLabels}
     `);
-    await sleep(500);
+    await applySanitize('186 tokens this turn · Klaud runs real commands in my-project');
 
-    // 4. Capture HERO screenshot (rich active turn with Claude styling, tool diff, command output)
-    await browser.screenshot(path.join(imgDir, 'hero.png'));
-    console.log('✓ hero.png updated');
+    // 7a. Docs screenshot-turn.png (1x DPR)
+    await browser.setViewport(1384, 905, 1);
+    await applySanitize('186 tokens this turn · Klaud runs real commands in my-project');
+    await browser.screenshot(path.join(docsShotDir, 'screenshot-turn.png'));
 
-    // 5. Capture TOOLS screenshot (focused on tool cards & diff)
-    await browser.screenshot(path.join(imgDir, 'tools.png'));
-    console.log('✓ tools.png updated');
+    // 7b. Marketing hero.png (2x DPR Retina)
+    await browser.setViewport(1384, 905, 2);
+    await applySanitize('186 tokens this turn · Klaud runs real commands in my-project');
+    await browser.screenshot(path.join(siteImgDir, 'hero.png'));
 
-    // 6. Capture DARK screenshot (dark mode active)
+    // 7c. OpenGraph preview image (site/og.png, 2x DPR Retina)
+    await browser.screenshot(path.join(PROJECT, 'site', 'og.png'));
+
+    // 7d. Marketing tools.png (2x DPR Retina, width 1084)
+    await browser.setViewport(1084, 905, 2);
+    await applySanitize('186 tokens this turn · Klaud runs real commands in my-project');
+    await browser.screenshot(path.join(siteImgDir, 'tools.png'));
+    await browser.setViewport(1384, 905, 2);
+
+    // 7e. Dark mode: docs screenshot-dark.png (1x DPR) and marketing dark.png (2x DPR)
     await browser.evaluate(`
       document.getElementById('toggle-theme').click();
     `);
-    await sleep(700);
-    await browser.evaluate(fixLabels);
-    await browser.screenshot(path.join(imgDir, 'dark.png'));
-    console.log('✓ dark.png updated');
+    await sleep(600);
 
+    await browser.setViewport(1384, 905, 1);
+    await applySanitize('186 tokens this turn · Klaud runs real commands in my-project');
+    await browser.screenshot(path.join(docsShotDir, 'screenshot-dark.png'));
+
+    await browser.setViewport(1384, 905, 2);
+    await applySanitize('186 tokens this turn · Klaud runs real commands in my-project');
+    await browser.screenshot(path.join(siteImgDir, 'dark.png'));
+
+    console.log('\n✓ All screenshots captured and sanitized successfully!');
   } finally {
     if (browser) await browser.close();
     server.kill();
@@ -375,7 +657,6 @@ async function launchBrowser(port) {
     await fs.rm(workspace, { recursive: true, force: true }).catch(() => {});
   }
 
-  console.log('All screenshots captured successfully!');
   process.exit(0);
 })().catch((err) => {
   console.error('Screenshot capture failed:', err);

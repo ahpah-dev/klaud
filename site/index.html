@@ -10,16 +10,40 @@
 <meta property="og:image" content="https://klaud-app.vercel.app/og.png">
 <meta property="og:url" content="https://klaud-app.vercel.app/">
 <meta property="og:type" content="website">
+<meta property="og:site_name" content="Klaud">
 <meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Klaud — a local coding agent that is 100% free">
+<meta name="twitter:description" content="Real files, real commands, verified work. Free to install, free to run.">
+<meta name="twitter:image" content="https://klaud-app.vercel.app/og.png">
 <meta name="theme-color" content="#f0eee6">
+<meta name="color-scheme" content="light">
+<link rel="canonical" href="https://klaud-app.vercel.app/">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="preload" href="fonts/AnthropicSerif-400.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="fonts/AnthropicSerif-500.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="fonts/AnthropicSerif-600.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="styles.css">
 <script>document.documentElement.classList.add('js');</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "Klaud",
+  "applicationCategory": "DeveloperApplication",
+  "operatingSystem": "Windows, macOS, Linux",
+  "description": "A local coding agent with a built-in list of genuinely free, no-card OpenAI-compatible model providers. It reads and writes real files, runs real commands, and verifies its own work.",
+  "url": "https://klaud-app.vercel.app/",
+  "license": "https://github.com/ahpah-dev/klaud/blob/main/LICENSE",
+  "isAccessibleForFree": true,
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+  "softwareVersion": "1.5.0",
+  "codeRepository": "https://github.com/ahpah-dev/klaud"
+}
+</script>
 </head>
 <body>
+
+<a class="skip-link" href="#main">Skip to content</a>
 
 <header class="site-header" id="top">
   <div class="wrap header-inner">
@@ -32,7 +56,7 @@
       </svg>
       <span class="brand-name">Klaud</span>
     </a>
-    <nav class="site-nav" aria-label="Main navigation">
+    <nav class="site-nav" id="site-nav" aria-label="Main navigation">
       <a href="#capabilities">Capabilities</a>
       <a href="#free">Free to run</a>
       <a href="#safety">Safety</a>
@@ -49,11 +73,14 @@
         <span>GitHub</span>
         <svg viewBox="0 0 12 12" class="i-ext" aria-hidden="true"><path d="M4 2h6v6M10 2 2 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </a>
+      <button class="nav-toggle" type="button" aria-label="Open menu" aria-controls="site-nav" aria-expanded="false">
+        <span class="nav-toggle-bars" aria-hidden="true"><span></span><span></span><span></span></span>
+      </button>
     </div>
   </div>
 </header>
 
-<main>
+<main id="main">
 
   <!-- ============ HERO ============ -->
   <section class="hero">
@@ -102,7 +129,7 @@
           </div>
           <span class="window-title">klaud — local coding agent</span>
         </div>
-        <img src="img/hero.png" alt="The Klaud interface: a local coding agent that reads, edits, and verifies code with real tools and diffs." width="2768" height="1810">
+        <img src="img/hero.png" alt="The Klaud interface: a local coding agent that reads, edits, and verifies code with real tools and diffs." width="2768" height="1810" fetchpriority="high" decoding="async">
       </figure>
     </div>
   </section>

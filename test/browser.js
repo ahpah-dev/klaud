@@ -295,6 +295,8 @@ class Browser {
   const cdpPort = await freePort();
   const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'klaud-browser-data-'));
   const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'klaud-browser-ws-'));
+  const SHOT_DIR = process.env.KLAUD_SHOT_DIR || path.join(os.tmpdir(), 'klaud-test-shots');
+  await fs.mkdir(SHOT_DIR, { recursive: true });
 
   /* A project skill, written **before the server starts**. Klaud caches its skill
    * directory scan per workspace, and the suite runs a real turn earlier on, so a
@@ -861,7 +863,7 @@ class Browser {
     check('the real model id is restored afterwards',
       chip.restored === 'browser-model', JSON.stringify(chip));
 
-    const welcomeShot = await browser.screenshot(path.join(PROJECT, 'docs', 'screenshots', 'screenshot-welcome.png'));
+    const welcomeShot = await browser.screenshot(path.join(SHOT_DIR, 'screenshot-welcome.png'));
 
     /* ---------- type a message and send it ---------- */
     await browser.evaluate(`
@@ -946,7 +948,7 @@ class Browser {
     check('the file exists on disk with the right contents',
       produced === 'hello from a real click\n', JSON.stringify(produced));
 
-    const turnShot = await browser.screenshot(path.join(PROJECT, 'docs', 'screenshots', 'screenshot-turn.png'));
+    const turnShot = await browser.screenshot(path.join(SHOT_DIR, 'screenshot-turn.png'));
 
     /* ---------- persistence ---------- */
     // Give the client a moment to PUT the turn, then poll rather than guess.
@@ -1013,7 +1015,7 @@ class Browser {
       /\u2022/.test(String(modal.keyPlaceholder)) && !String(modal.keyPlaceholder).includes('browser-key'),
       String(modal.keyPlaceholder));
 
-    const modalShot = await browser.screenshot(path.join(PROJECT, 'docs', 'screenshots', 'screenshot-settings.png'));
+    const modalShot = await browser.screenshot(path.join(SHOT_DIR, 'screenshot-settings.png'));
 
     await browser.evaluate(`
       document.querySelector('.overlay [data-close]').click();
@@ -1186,7 +1188,7 @@ class Browser {
       JSON.stringify(ringAfterClick));
 
     const connectionsShot = await browser.screenshot(
-      path.join(PROJECT, 'docs', 'screenshots', 'screenshot-connections.png')
+      path.join(SHOT_DIR, 'screenshot-connections.png')
     );
 
     check('no exceptions after opening the Connections panel',
@@ -1224,7 +1226,7 @@ class Browser {
     await sleep(300);
     const theme = await browser.evaluate(`return document.documentElement.dataset.theme;`);
     check('the theme toggle switches to dark', theme === 'dark', String(theme));
-    const darkShot = await browser.screenshot(path.join(PROJECT, 'docs', 'screenshots', 'screenshot-dark.png'));
+    const darkShot = await browser.screenshot(path.join(SHOT_DIR, 'screenshot-dark.png'));
 
     /* ---------- the free provider picker ---------- */
     await browser.evaluate(`
@@ -1388,7 +1390,7 @@ class Browser {
     check('the account ID field stays visible after a failure',
       bothSubmitted.accountFieldStillVisible === true, JSON.stringify(bothSubmitted));
 
-    const setupShot = await browser.screenshot(path.join(PROJECT, 'docs', 'screenshots', 'screenshot-cloudflare-setup.png'));
+    const setupShot = await browser.screenshot(path.join(SHOT_DIR, 'screenshot-cloudflare-setup.png'));
 
     // A bad token must fail visibly and change nothing.
     await browser.evaluate(`
@@ -1422,11 +1424,11 @@ class Browser {
     check('any failure reveals the manual account ID escape hatch',
       setupFail.accountFieldShown === true, JSON.stringify(setupFail));
 
-    const failShot = await browser.screenshot(path.join(PROJECT, 'docs', 'screenshots', 'screenshot-cloudflare-error.png'));
+    const failShot = await browser.screenshot(path.join(SHOT_DIR, 'screenshot-cloudflare-error.png'));
 
     check('no exceptions from the setup panel', browser.exceptions.length === 0, browser.exceptions.join('\n'));
 
-    const freeShot = await browser.screenshot(path.join(PROJECT, 'docs', 'screenshots', 'screenshot-free-providers.png'));
+    const freeShot = await browser.screenshot(path.join(SHOT_DIR, 'screenshot-free-providers.png'));
 
     /* ---------- applying a free provider ---------- */
     await browser.evaluate(`
@@ -1828,7 +1830,7 @@ class Browser {
     `);
     await sleep(200);
     const coworkShot = await browser.screenshot(
-      path.join(PROJECT, 'docs', 'screenshots', 'screenshot-cowork-composer.png')
+      path.join(SHOT_DIR, 'screenshot-cowork-composer.png')
     );
 
     // `mode` is a real setting now, so a reload is served by the server rather
@@ -2107,7 +2109,7 @@ class Browser {
     check('a slash inside a sentence does not open the menu', midSentence === false, String(midSentence));
 
     const hintShot = await browser.screenshot(
-      path.join(PROJECT, 'docs', 'screenshots', 'screenshot-skill-menu.png')
+      path.join(SHOT_DIR, 'screenshot-skill-menu.png')
     );
     /* `fs` here is fs/promises, so the check is that the capture returned bytes.
        A write that failed would have thrown and been caught by the harness. */
