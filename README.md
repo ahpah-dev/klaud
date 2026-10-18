@@ -1,6 +1,6 @@
 # Klaud
 
-**v1.4.0** — a local coding agent with a built-in list of **genuinely free, no-card
+**v1.5.0** — a local coding agent with a built-in list of **genuinely free, no-card
 OpenAI-compatible providers**. It reads and writes real files on your machine,
 runs real commands, and verifies its own work — behind a warm, paper-like
 interface.

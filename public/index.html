@@ -9,6 +9,9 @@
 <meta name="theme-color" content="#faf9f5" media="(prefers-color-scheme: light)" />
 <meta name="theme-color" content="#1f1e1d" media="(prefers-color-scheme: dark)" />
 <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&family=Newsreader:ital,opsz,wght@0,6..72,200..800;1,6..72,200..800&family=Lora:ital,wght@0,400..700;1,400..700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="/styles.css" />
 <script>
   // Apply the stored theme before first paint to avoid a flash.
@@ -85,6 +88,25 @@
         New chat
       </button>
     </div>
+
+    <nav class="sidebar-nav" aria-label="Quick links">
+      <button class="sidebar-nav-item" id="nav-projects" type="button" title="Projects & Workspace">
+        <svg aria-hidden="true"><use href="#i-folder"/></svg>
+        <span>Projects</span>
+      </button>
+      <button class="sidebar-nav-item" id="nav-artifacts" type="button" title="Artifacts & Files">
+        <svg aria-hidden="true"><use href="#i-file"/></svg>
+        <span>Artifacts</span>
+      </button>
+      <button class="sidebar-nav-item" id="nav-code" type="button" title="Code & Extensions">
+        <svg aria-hidden="true"><use href="#i-terminal"/></svg>
+        <span>Code</span>
+      </button>
+      <button class="sidebar-nav-item" id="nav-customize" type="button" title="Customize">
+        <svg aria-hidden="true"><use href="#i-settings"/></svg>
+        <span>Customize</span>
+      </button>
+    </nav>
 
     <div class="sidebar-label">Chats and tasks</div>
     <div class="chat-list" id="chat-list"></div>

@@ -519,7 +519,8 @@ async function handleApi(req, res, url, pathname, { token, activeTurns }) {
      * it explicitly with `allowInstall: true`. Otherwise setup answers with the
      * exact command for the user to run. */
     if (provider === 'omniroute') {
-      const { setupOmniRoute } = require('./lib/omniroute');
+      const { setupOmniRoute, findOmniRouteKey } = require('./lib/omniroute');
+      const autoKey = apiKey || (typeof findOmniRouteKey === 'function' ? findOmniRouteKey() : '') || '';
       let result;
       try {
         result = await setupOmniRoute({
@@ -529,8 +530,9 @@ async function handleApi(req, res, url, pathname, { token, activeTurns }) {
           /* Verified against a real OmniRoute on this machine: `/v1/models`
            * answers 401 "Authentication required" with no key, and a different 401
            * "Invalid API key" with a wrong one. So it needs its own key even on
-           * loopback, and the key to test is whatever the user just pasted. */
-          storedApiKey: apiKey,
+           * loopback, and the key to test is whatever the user just pasted or the
+           * active key discovered from local storage.sqlite. */
+          storedApiKey: autoKey,
         });
       } catch (err) {
         return sendError(res, 500, err?.message || String(err)), true;
@@ -538,9 +540,13 @@ async function handleApi(req, res, url, pathname, { token, activeTurns }) {
 
       if (result.ok) {
         const patch = { baseUrl: result.baseUrl, model: result.model || 'auto' };
-        /* Only persist a key the user actually supplied in this request. The
-         * stored one is already on disk, and re-saving it would not help. */
-        if (supplied !== null) patch.apiKey = apiKey;
+        /* Persist a key the user actually supplied, or the one discovered locally. */
+        const effectiveKey = result.apiKey || autoKey;
+        if (result.clearApiKey) {
+          patch.apiKey = '';
+        } else if (supplied !== null || effectiveKey) {
+          patch.apiKey = effectiveKey;
+        }
         const saved = await store.saveSettings(patch);
         result.settings = store.publicSettings(saved);
         console.log(

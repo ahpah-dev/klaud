@@ -417,8 +417,10 @@ function renderWelcome() {
   if (!state.greeting) state.greeting = pickGreeting();
   dom.messages.innerHTML = `
     <div class="welcome">
-      <svg class="mark" aria-hidden="true"><use href="#i-mark"/></svg>
-      <h1>${greetingMarkup(state.greeting)}</h1>
+      <h1 class="welcome-heading">
+        <svg class="mark" aria-hidden="true"><use href="#i-mark"/></svg>
+        <span>${greetingMarkup(state.greeting)}</span>
+      </h1>
       ${
         hasKey
           ? ''
@@ -943,6 +945,7 @@ function renderChatList() {
     .map(
       (chat) => `
       <div class="chat-item ${chat.id === state.chatId ? 'active' : ''}" data-chat="${escapeHtml(chat.id)}" role="button" tabindex="0">
+        <span class="chat-bullet"></span>
         <span class="title">${escapeHtml(chat.title || 'Untitled')}</span>
         <button class="del" data-delete="${escapeHtml(chat.id)}" title="Delete chat" aria-label="Delete chat">${icon('i-trash')}</button>
       </div>`
@@ -3514,6 +3517,12 @@ function wireEvents() {
   dom.send.addEventListener('click', () => (state.streaming ? stopStreaming() : submit()));
   el('open-free').addEventListener('click', openFreeProviders);
   el('new-chat').addEventListener('click', newChat);
+  if (el('nav-projects')) el('nav-projects').addEventListener('click', () => el('workspace-chip').click());
+  if (el('nav-artifacts')) el('nav-artifacts').addEventListener('click', () => {
+    toast('Artifacts: Project files and tool outputs appear inline during chat.');
+  });
+  if (el('nav-code')) el('nav-code').addEventListener('click', openFreeProviders);
+  if (el('nav-customize')) el('nav-customize').addEventListener('click', openSettings);
   el('open-settings-top').addEventListener('click', openSettings);
   el('toggle-theme').addEventListener('click', toggleTheme);
   // The sidebar header's button hides it; the button that appears in the top bar
@@ -3651,7 +3660,11 @@ async function boot() {
   dom.prompt.focus();
 
   if (!state.config.hasApiKey) {
-    setTimeout(openSettings, 350);
+    setTimeout(() => {
+      if (!dom.modalRoot || !dom.modalRoot.children.length) {
+        openSettings();
+      }
+    }, 350);
   }
 }
 

@@ -28,3 +28,4 @@ desktop.ini
 *.log
 npm-debug.log*
 .klaud-browser-*/
+.vercel/

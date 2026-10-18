@@ -1,3 +1,37 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Lora:ital,wght@0,400;0,500;0,600;1,400&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@font-face {
+  font-family: 'Anthropic Serif';
+  src: url('/fonts/AnthropicSerif-400.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Anthropic Serif';
+  src: url('/fonts/AnthropicSerif-500.woff2') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Anthropic Serif';
+  src: url('/fonts/AnthropicSerif-600.woff2') format('woff2');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Anthropic Serif';
+  src: url('/fonts/AnthropicSerif-700.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
 /* ==========================================================================
    Klaud — design system
    A warm, paper-like interface: cream (light) and charcoal (dark) surfaces, a
@@ -22,11 +56,11 @@
   --radius-lg: 16px;
   --radius-xl: 24px;
 
-  --font-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text",
-    "Segoe UI", Inter, Roboto, "Helvetica Neue", Arial, sans-serif;
-  --font-serif: "Copernicus", "Tiempos Text", "Iowan Old Style", "Palatino Linotype",
+  --font-sans: "Inter", ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text",
+    "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-serif: "Anthropic Serif", "Newsreader", "Lora", "Copernicus", "Tiempos Headline", "Iowan Old Style", "Palatino Linotype",
     Palatino, Georgia, "Times New Roman", serif;
-  --font-mono: ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas,
+  --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas,
     "Liberation Mono", monospace;
 
   --shadow-sm: 0 1px 2px rgba(30, 22, 18, 0.06);
@@ -367,6 +401,58 @@ body.sidebar-hidden .sidebar-reveal {
   color: #fff;
 }
 
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 8px 10px;
+}
+
+.sidebar-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  font-size: 13px;
+  color: var(--text-2);
+  font-weight: 500;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s var(--ease), color 0.12s var(--ease);
+}
+
+.sidebar-nav-item:hover {
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  color: var(--text);
+}
+
+.sidebar-nav-item svg {
+  width: 16px;
+  height: 16px;
+  color: var(--text-3);
+  flex: none;
+}
+
+.sidebar-nav-item span {
+  flex: 1;
+}
+
+.nav-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 26%, transparent);
+  margin-left: auto;
+  letter-spacing: 0.02em;
+}
+
 .sidebar-label {
   padding: 14px 16px 6px;
   font-size: 11px;
@@ -415,6 +501,23 @@ body.sidebar-hidden .sidebar-reveal {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.chat-bullet {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  border: 1.5px solid var(--text-3);
+  flex: none;
+  opacity: 0.65;
+  transition: border-color 0.12s var(--ease), opacity 0.12s var(--ease);
+}
+
+.chat-item:hover .chat-bullet,
+.chat-item.active .chat-bullet {
+  border-color: var(--accent);
+  opacity: 1;
 }
 
 .chat-item .del {
@@ -494,6 +597,49 @@ body.sidebar-hidden .sidebar-reveal {
   font-size: 11px;
 }
 
+.user-avatar {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: #e2ddd5;
+  color: #383428;
+  font-weight: 600;
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  letter-spacing: -0.02em;
+}
+
+[data-theme="dark"] .user-avatar {
+  background: #3e3a34;
+  color: #e6e2d8;
+}
+
+.user-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+  text-align: left;
+  line-height: 1.25;
+}
+
+.user-plan {
+  font-size: 11px;
+  color: var(--text-3);
+  font-family: var(--font-sans);
+}
+
+.foot-chev {
+  width: 14px;
+  height: 14px;
+  color: var(--text-3);
+  flex: none;
+  transform: rotate(90deg);
+}
+
 /* -------------------------------- main ---------------------------------- */
 
 .main {
@@ -539,6 +685,48 @@ body.sidebar-hidden .sidebar-reveal {
 .icon-btn svg {
   width: 17px;
   height: 17px;
+}
+
+.top-plan-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 12px;
+  height: 32px;
+  width: auto;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color 0.12s var(--ease), background 0.12s var(--ease), color 0.12s var(--ease);
+}
+
+.top-plan-pill:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.top-plan-pill svg {
+  width: 14px;
+  height: 14px;
+  color: var(--accent);
+  flex: none;
+}
+
+.plan-pill-text {
+  font-size: 12px;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.plan-upgrade {
+  color: var(--accent);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 .model-pill {
@@ -633,16 +821,33 @@ body.sidebar-hidden .sidebar-reveal {
 
 .welcome h1 {
   font-family: var(--font-serif);
-  font-size: clamp(28px, 3.6vw, 40px);
-  font-weight: 500;
+  font-size: clamp(30px, 3.8vw, 42px);
+  font-weight: 400;
+  font-optical-sizing: auto;
   line-height: 1.15;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.015em;
   margin: 0 0 10px;
+}
+
+.welcome-heading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  width: 100%;
+}
+
+.welcome-heading .mark {
+  width: 34px;
+  height: 34px;
+  margin-bottom: 0;
+  flex: none;
 }
 
 .welcome h1 em {
   font-style: normal;
-  color: var(--accent);
+  font-weight: 400;
+  color: var(--text);
 }
 
 .welcome p.lede {
@@ -3304,25 +3509,20 @@ body {
 
 /* --- headings and the display face ------------------------------------ */
 .welcome h1 {
-  font-size: clamp(30px, 3.9vw, 44px);
-  letter-spacing: -0.028em;
+  font-size: clamp(30px, 3.8vw, 42px);
+  font-weight: 400;
+  letter-spacing: -0.015em;
 }
 
 .welcome h1 em {
   position: relative;
   white-space: nowrap;
+  font-weight: 400;
+  color: var(--text);
 }
 
 .welcome h1 em::after {
-  content: "";
-  position: absolute;
-  left: -0.02em;
-  right: -0.02em;
-  bottom: 0.04em;
-  height: 0.34em;
-  background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 34%, transparent), transparent);
-  border-radius: 0.1em;
-  z-index: -1;
+  display: none;
 }
 
 /* --- the mark --------------------------------------------------------- */
@@ -3702,17 +3902,19 @@ body {
 }
 
 .welcome .mark {
-  width: 30px;
-  height: 30px;
-  margin: 0 auto 14px;
+  width: 34px;
+  height: 34px;
+  margin: 0;
   color: var(--accent);
-  display: block;
+  display: inline-block;
+  vertical-align: middle;
+  flex: none;
 }
 
 .welcome h1 {
-  font-size: clamp(30px, 4.2vw, 46px);
-  font-weight: 500;
-  letter-spacing: -0.025em;
+  font-size: clamp(30px, 3.8vw, 42px);
+  font-weight: 400;
+  letter-spacing: -0.015em;
   margin: 0 0 10px;
   text-align: center;
 }
@@ -3720,6 +3922,7 @@ body {
 .welcome h1 em {
   color: var(--text);
   font-style: normal;
+  font-weight: 400;
 }
 
 .welcome p.lede {
@@ -4089,11 +4292,9 @@ body {
 
 .app.is-empty .centre-group {
   justify-content: center;
-  /* Nudges the block up off dead centre. The greeting and the input read better
-     slightly high: the hint line under the field carries weight the geometric
-     midpoint does not account for. Expressed as padding so a short viewport
-     cannot push the block off the top. */
-  padding-bottom: 7%;
+  /* Nudges the block slightly up off dead centre while keeping the greeting and
+     composer centered within tolerance. */
+  padding-bottom: 1.5%;
 }
 
 /* Essential. The scroller's base rule is `flex: 1`, so inside a centring column
@@ -4348,20 +4549,15 @@ body {
   }
 }
 
-/* --- welcome: the underline under "go" actually renders ----------------- */
-/* It was given `z-index: -1`, which painted it behind `.app` (the nearest
-   stacking context) rather than behind the word — invisible in both themes. A
-   stacking context on the `<em>` puts it where the rule always intended. */
+/* --- welcome: clean typography, no underline ---------------------------- */
 .welcome h1 em {
   z-index: 0;
+  color: var(--text);
+  font-weight: 400;
 }
 
-/* ...and sits under the word instead of through it. At `bottom: 0.04em` of a
-   face with generous descenders the band crossed the descender of the "g", so
-   "go" read as struck through. Below the descender it reads as an underline. */
 .welcome h1 em::after {
-  bottom: -0.04em;
-  height: 0.16em;
+  display: none !important;
 }
 
 /* --- the one accent left in an inline notice ---------------------------- */

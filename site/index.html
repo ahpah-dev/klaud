@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Klaud — a local coding agent that is 100% free</title>
+<meta name="description" content="Klaud reads and writes real files, runs real commands, and verifies its own work — with a built-in list of genuinely free, no-card model providers. Open source, MIT, zero dependencies.">
+<meta property="og:title" content="Klaud — a local coding agent that is 100% free">
+<meta property="og:description" content="Real files, real commands, verified work. Free to install, free to run.">
+<meta property="og:image" content="https://klaud-app.vercel.app/og.png">
+<meta property="og:url" content="https://klaud-app.vercel.app/">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#f0eee6">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="preload" href="fonts/AnthropicSerif-600.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="styles.css">
+<script>document.documentElement.classList.add('js');</script>
+</head>
+<body>
+
+<header class="site-header" id="top">
+  <div class="wrap header-inner">
+    <a class="brand" href="#top" aria-label="Klaud home">
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+        <rect width="32" height="32" rx="7" fill="#d97757"/>
+        <path d="M19.4 3.4 27.4 11.4 19.4 19.4 11.4 11.4z" fill="#faf9f5" opacity=".26"/>
+        <path d="M22.9 11.4 19.1 15.2 22.9 19 26.7 15.2z" fill="#faf9f5" opacity=".6"/>
+        <path d="M8.4 4.4h3.5v9.6l7.1-9.6h4.2l-7.6 10.3 7.8 12.9h-4.3l-7.2-11.9v11.9H8.4z" fill="#faf9f5"/>
+      </svg>
+      <span class="brand-name">Klaud</span>
+    </a>
+    <nav class="site-nav" aria-label="Main">
+      <a href="#capabilities">Capabilities</a>
+      <a href="#free">Free to run</a>
+      <a href="#safety">Safety</a>
+      <a href="#install">Install</a>
+    </nav>
+    <a class="btn btn-ink btn-small" href="https://github.com/ahpah-dev/klaud" target="_blank" rel="noopener">
+      GitHub
+      <svg viewBox="0 0 12 12" class="i-ext" aria-hidden="true"><path d="M4 2h6v6M10 2 2 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </a>
+  </div>
+</header>
+
+<main>
+
+  <!-- ============ HERO ============ -->
+  <section class="hero">
+    <div class="hero-glow" aria-hidden="true"></div>
+    <div class="wrap hero-inner">
+      <p class="eyebrow reveal">v1.5.0 · MIT · zero dependencies</p>
+      <h1 class="reveal">
+        Free to install.<br>
+        <em>Free to run.</em>
+      </h1>
+      <p class="lede reveal">
+        Klaud is a local coding agent with a built-in list of genuinely free, no-card
+        model providers. It reads and writes real files on your machine, runs real
+        commands, and verifies its own work. Bring your own key — or bring no key at all.
+      </p>
+      <div class="cta-row reveal">
+        <a class="btn btn-accent" href="https://github.com/ahpah-dev/klaud" target="_blank" rel="noopener">Get Klaud</a>
+        <button class="copy-chip" type="button" data-copy="npm start">
+          <span class="prompt" aria-hidden="true">$</span>
+          <code>npm start</code>
+          <span class="copy-label">copy</span>
+        </button>
+      </div>
+
+      <figure class="window reveal">
+        <div class="window-bar" aria-hidden="true">
+          <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+          <span class="window-title">klaud — local coding agent</span>
+        </div>
+        <img src="img/hero.png" alt="The Klaud interface: a chat where the agent writes a file, reports the steps it took, and shows the result as code." width="2532" height="1656">
+      </figure>
+    </div>
+  </section>
+
+  <!-- ============ STATS ============ -->
+  <section class="stats" aria-label="At a glance">
+    <div class="wrap stats-grid">
+      <div class="stat reveal"><span class="stat-num">9</span><span class="stat-label">tools, all confined to one working directory</span></div>
+      <div class="stat reveal"><span class="stat-num">7</span><span class="stat-label">free provider paths, none requiring a card</span></div>
+      <div class="stat reveal"><span class="stat-num">0</span><span class="stat-label">npm dependencies, build steps, or databases</span></div>
+      <div class="stat reveal"><span class="stat-num">MIT</span><span class="stat-label">open source, yours to read and change</span></div>
+    </div>
+  </section>
+
+  <!-- ============ CAPABILITIES ============ -->
+  <section class="section" id="capabilities">
+    <div class="wrap">
+      <header class="section-head">
+        <p class="eyebrow reveal">What it can do</p>
+        <h2 class="reveal">A complete agent loop, and nothing hidden in it.</h2>
+        <p class="standfirst reveal">
+          A model sees each tool result and decides the next step: read the file, change
+          it, run the build, read the error, fix it again. Klaud makes that loop honest —
+          every tool call is shown in the transcript, with its arguments and its timing.
+        </p>
+      </header>
+
+      <div class="card-grid">
+        <article class="card reveal">
+          <span class="card-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/><path d="M9 12h6M9 16h4"/></svg>
+          </span>
+          <h3>Reads and writes real files</h3>
+          <p>Reads with line numbers, writes without clobbering, and edits by exact string
+          match — an ambiguous match is rejected with the reason rather than guessed at.
+          Every change renders as a diff you can check.</p>
+        </article>
+
+        <article class="card reveal">
+          <span class="card-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M13 15h4"/></svg>
+          </span>
+          <h3>Runs real commands</h3>
+          <p>A shell in your working directory, returning stdout, stderr and the real exit
+          code. Windows misreports these, so Klaud wraps commands — a build is only fixed
+          when it is actually broken.</p>
+        </article>
+
+        <article class="card reveal">
+          <span class="card-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M8.5 12.2l2.4 2.4 4.6-4.9"/></svg>
+          </span>
+          <h3>Verifies what it did</h3>
+          <p>The loop guards itself rather than trusting the model: identical calls are
+          refused, rate limits are honoured, and two steps before the cap Klaud is told to
+          stop starting work and write the summary.</p>
+        </article>
+
+        <article class="card reveal">
+          <span class="card-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M4 6h9M4 12h13M4 18h7"/><circle cx="18.5" cy="6" r="1.6"/><circle cx="19.5" cy="18" r="1.6"/></svg>
+          </span>
+          <h3>Cowork mode for longer work</h3>
+          <p>The same agent pointed at a task instead of a question. It plans, shows its
+          task list as it works through the steps, and finishes with a hand-off. Same
+          provider, same workspace, same permissions.</p>
+        </article>
+
+        <article class="card reveal">
+          <span class="card-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/></svg>
+          </span>
+          <h3>Skills, plugins, subagents</h3>
+          <p>Procedures you write once and Klaud loads when they are relevant — or on
+          demand with <code>/name</code>. Subagents take side work into their own context
+          and cannot delegate further or exceed your session.</p>
+        </article>
+
+        <article class="card reveal">
+          <span class="card-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.6 2.3 3.9 5.1 3.9 8.5s-1.3 6.2-3.9 8.5M12 3.5C9.4 5.8 8.1 8.6 8.1 12s1.3 6.2 3.9 8.5"/></svg>
+          </span>
+          <h3>A browser, and Gmail as you</h3>
+          <p>It can drive a real browser over a DevTools pipe — read a page, click, type —
+          and connect to Gmail so mail is sent from your account, with sending treated as
+          its own permission tier.</p>
+        </article>
+      </div>
+
+      <!-- nine tools -->
+      <div class="tools-block">
+        <div class="tools-copy reveal">
+          <p class="eyebrow">The whole surface area</p>
+          <h3 class="tools-title">Nine tools. That is all of it.</h3>
+          <p>
+            Every capability above is these nine calls against one directory. No plugin
+            can grant more, and a subagent is given fewer, never more. What the agent can
+            reach is what you can read here.
+          </p>
+        </div>
+        <dl class="tools-list reveal">
+          <div><dt>read_file</dt><dd>UTF-8 text with line numbers, paged</dd></div>
+          <div><dt>write_file</dt><dd>creates files; never clobbers by accident</dd></div>
+          <div><dt>edit_file</dt><dd>exact-string replacement, diffs included</dd></div>
+          <div><dt>list_dir</dt><dd>flat or recursive directory listing</dd></div>
+          <div><dt>glob_files</dt><dd>find files by pattern</dd></div>
+          <div><dt>search_text</dt><dd>regex search with file:line results</dd></div>
+          <div><dt>run_command</dt><dd>shell, real exit codes, real timeouts</dd></div>
+          <div><dt>fetch_url</dt><dd>a web page or API, stripped to text</dd></div>
+          <div><dt>todo_write</dt><dd>a visible task list for multi-step jobs</dd></div>
+        </dl>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ FREE TO RUN ============ -->
+  <section class="section section-tint" id="free">
+    <div class="wrap">
+      <header class="section-head">
+        <p class="eyebrow reveal">100% free</p>
+        <h2 class="reveal">No card, no trial credit, no expiry.</h2>
+        <p class="standfirst reveal">
+          The <strong>Free</strong> button opens a picker of endpoints that cost nothing,
+          each probed and confirmed live before it was listed. Trial-credit offers are
+          excluded, and providers that dropped their free tier are removed — with the date
+          and the source link recorded in the app.
+        </p>
+      </header>
+
+      <div class="provider-grid">
+        <article class="card provider featured reveal">
+          <div class="provider-top">
+            <h3>NVIDIA NIM</h3>
+            <span class="chip">Recommended</span>
+          </div>
+          <p class="basis">Limit: ~40 requests / minute · not published</p>
+          <p>A 120B mixture-of-experts built for tool use, with a free key and no card.
+          The limit is the point: a per-minute rate refills continuously, so an agent turn
+          is throttled for a minute instead of dead until midnight.</p>
+        </article>
+
+        <article class="card provider reveal">
+          <div class="provider-top"><h3>Ollama / LM Studio</h3></div>
+          <p class="basis">Limit: none · local</p>
+          <p>Nothing is metered — the only allowance here that never runs out. Runs on your
+          own hardware, so nothing you write travels anywhere.</p>
+        </article>
+
+        <article class="card provider reveal">
+          <div class="provider-top"><h3>Groq</h3></div>
+          <p class="basis">Limit: 30 / min, 1,000 / day · published</p>
+          <p>A full per-model table is shown in the picker. One of the best hosted options
+          for an agent, which makes 5–15 requests per task.</p>
+        </article>
+
+        <article class="card provider reveal">
+          <div class="provider-top"><h3>Cloudflare Workers AI</h3></div>
+          <p class="basis">Limit: 10,000 Neurons / day · published</p>
+          <p>Per-model rates are published, so you can compute exactly what a model costs.
+          Setup is one field — the account ID is read out of your token.</p>
+        </article>
+
+        <article class="card provider reveal">
+          <div class="provider-top"><h3>Mistral La Plateforme</h3></div>
+          <p class="basis">Limit: ~1B tokens / month · not published</p>
+          <p>Measured in tokens rather than requests, roughly 500k tokens per minute per
+          model. Needs a phone-verified account.</p>
+        </article>
+
+        <article class="card provider reveal">
+          <div class="provider-top"><h3>Google AI Studio &amp; OpenRouter</h3></div>
+          <p class="basis">Limit: varies · not published</p>
+          <p>Flash-class models on Google's free tier; ~50 free requests a day on
+          OpenRouter, which has the widest model variety. Figures say so where nothing
+          public exists.</p>
+        </article>
+      </div>
+
+      <div class="note-row reveal">
+        <p class="note">
+          <strong>On the numbers.</strong> Rate limits are quoted from the providers' own
+          pages and labelled <em>published</em> or <em>not published</em> — Klaud does not
+          verify them, and says so on each card. And tool calling is not optional: files,
+          edits and commands all need it, so a model that refuses the schema falls back to
+          plain chat in the transcript rather than failing silently.
+        </p>
+        <p class="note">
+          <strong>Or bring a key.</strong> Anything OpenAI-compatible works — the official
+          API, another gateway, an OmniRoute instance on your own machine, or a local
+          model. Klaud sends each host the parameters it documents and nothing more.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ SAFETY ============ -->
+  <section class="section section-dark" id="safety">
+    <div class="wrap">
+      <header class="section-head">
+        <p class="eyebrow eyebrow-light reveal">Safety model</p>
+        <h2 class="reveal">Boundaries in code, not in the prompt.</h2>
+        <p class="standfirst reveal">
+          Klaud runs a model's instructions against your filesystem. Asking nicely is not a
+          boundary, so every limit below is enforced by the server — where a persuasive
+          answer cannot reach it.
+        </p>
+      </header>
+
+      <div class="dark-grid">
+        <article class="dark-item reveal">
+          <h3>Path confinement</h3>
+          <p>Every path is resolved and rejected if it leaves the workspace —
+          <code>../</code>, absolute paths and null bytes included. The tools cannot see
+          your home directory, only the folder you chose.</p>
+        </article>
+        <article class="dark-item reveal">
+          <h3>Local and token-gated</h3>
+          <p>The server binds <code>127.0.0.1</code> and requires a session token on every
+          API route. A random web page open on your machine cannot drive your agent.</p>
+        </article>
+        <article class="dark-item reveal">
+          <h3>Three permission modes</h3>
+          <p><strong>Auto-run</strong> for speed. <strong>Ask first</strong> to confirm
+          every write and command inline, with its exact arguments. <strong>Read-only</strong>
+          refuses writes and execution outright — by the server, not hidden in the UI.</p>
+        </article>
+        <article class="dark-item reveal">
+          <h3>Destructive commands refused</h3>
+          <p><code>rm -rf /</code>, <code>mkfs</code>, <code>diskpart</code>,
+          <code>format C:</code> and fork bombs are blocked before spawning. Commands die
+          at the timeout, and one huge output cannot eat the context.</p>
+        </article>
+        <article class="dark-item reveal">
+          <h3>Honest about its limits</h3>
+          <p>Confines are lexical: a symlink inside the workspace that points outside it
+          will be followed. The browser reads text, not pixels. <code>file://</code> is
+          refused so the boundary stays real. Each limit is stated, not glossed.</p>
+        </article>
+        <article class="dark-item reveal">
+          <h3>Your data stays yours</h3>
+          <p>Settings, one JSON file per conversation, and the session token live in
+          <code>~/.klaud</code>. Nothing is sent anywhere except the API endpoint you
+          configure. Delete the folder to reset everything.</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ GALLERY ============ -->
+  <section class="section">
+    <div class="wrap">
+      <header class="section-head">
+        <p class="eyebrow reveal">The interface</p>
+        <h2 class="reveal">Warm, paper-like, and legible under pressure.</h2>
+        <p class="standfirst reveal">
+          The design has one job: make it obvious what the agent is doing. Tool calls
+          collapse into cards with their diffs, timings and exit codes — so a change is
+          reviewable at a glance, not buried in prose.
+        </p>
+      </header>
+
+      <div class="gallery">
+        <figure class="gallery-item reveal">
+          <div class="window">
+            <div class="window-bar" aria-hidden="true">
+              <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+            </div>
+            <img src="img/tools.png" alt="Tool cards showing an edit with its diff, a new file being written, and a command with its exit code." width="1084" height="905" loading="lazy">
+          </div>
+          <figcaption>Every edit as a diff, every command with its real exit code.</figcaption>
+        </figure>
+
+        <figure class="gallery-item reveal">
+          <div class="window">
+            <div class="window-bar" aria-hidden="true">
+              <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+            </div>
+            <img src="img/cowork.png" alt="The Cowork composer with suggestion cards for planning a task, fixing a problem everywhere, or chasing a failure." width="1384" height="905" loading="lazy">
+          </div>
+          <figcaption>Cowork — the same agent, pointed at longer work.</figcaption>
+        </figure>
+
+        <figure class="gallery-item reveal">
+          <div class="window window-dark">
+            <div class="window-bar" aria-hidden="true">
+              <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+            </div>
+            <img src="img/dark.png" alt="The Klaud interface in dark mode." width="1384" height="905" loading="lazy">
+          </div>
+          <figcaption>Dark mode for the hours it is actually used in.</figcaption>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ INSTALL ============ -->
+  <section class="section section-tint" id="install">
+    <div class="wrap">
+      <header class="section-head">
+        <p class="eyebrow reveal">Quick start</p>
+        <h2 class="reveal">Running in under a minute.</h2>
+        <p class="standfirst reveal">
+          Node 18+ and the standard library — nothing else to install. No npm packages, no
+          build step, no database. The console prints a URL carrying a session token; open
+          it once and Klaud remembers your browser.
+        </p>
+      </header>
+
+      <div class="install-grid">
+        <article class="card install-card reveal">
+          <h3>Windows</h3>
+          <button class="copy-line" type="button" data-copy="start-klaud.cmd">
+            <code>start-klaud.cmd</code>
+            <span class="copy-label">copy</span>
+          </button>
+          <p class="hint">Double-click it in Explorer.</p>
+        </article>
+        <article class="card install-card reveal">
+          <h3>macOS / Linux</h3>
+          <button class="copy-line" type="button" data-copy="./start-klaud.sh">
+            <code>./start-klaud.sh</code>
+            <span class="copy-label">copy</span>
+          </button>
+          <p class="hint">Run it from the project folder.</p>
+        </article>
+        <article class="card install-card reveal">
+          <h3>Any platform</h3>
+          <button class="copy-line" type="button" data-copy="npm start">
+            <code>npm start</code>
+            <span class="copy-label">copy</span>
+          </button>
+          <p class="hint">Then open the URL it prints.</p>
+        </article>
+      </div>
+
+      <div class="cta-row cta-center reveal">
+        <a class="btn btn-accent" href="https://github.com/ahpah-dev/klaud" target="_blank" rel="noopener">Get Klaud on GitHub</a>
+        <a class="btn btn-ghost" href="https://github.com/ahpah-dev/klaud#readme" target="_blank" rel="noopener">Read the README</a>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="wrap footer-inner">
+    <div class="footer-brand">
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+        <rect width="32" height="32" rx="7" fill="#d97757"/>
+        <path d="M19.4 3.4 27.4 11.4 19.4 19.4 11.4 11.4z" fill="#faf9f5" opacity=".26"/>
+        <path d="M22.9 11.4 19.1 15.2 22.9 19 26.7 15.2z" fill="#faf9f5" opacity=".6"/>
+        <path d="M8.4 4.4h3.5v9.6l7.1-9.6h4.2l-7.6 10.3 7.8 12.9h-4.3l-7.2-11.9v11.9H8.4z" fill="#faf9f5"/>
+      </svg>
+      <div>
+        <p class="footer-name">Klaud</p>
+        <p class="footer-tag">A local coding agent. Free in every sense.</p>
+      </div>
+    </div>
+    <nav class="footer-nav" aria-label="Footer">
+      <a href="https://github.com/ahpah-dev/klaud" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://github.com/ahpah-dev/klaud#readme" target="_blank" rel="noopener">README</a>
+      <a href="https://github.com/ahpah-dev/klaud/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a>
+      <a href="#top">Back to top</a>
+    </nav>
+  </div>
+</footer>
+
+<script src="main.js"></script>
+</body>
+</html>

@@ -181,6 +181,12 @@ async function describeHttpError(res, context = {}) {
     } else if (res.status === 429) {
       hint = ' Cloudflare is rate limiting. The free allowance is 10,000 Neurons per day, resetting at 00:00 UTC.';
     }
+  } else if (/127\.0\.0\.1:20128|localhost:20128/i.test(url)) {
+    if (res.status === 401) {
+      hint = ' OmniRoute requires an API key. Open http://localhost:20128 in a browser, then Dashboard → Endpoints, copy your key, and paste it in Settings.';
+    } else if (res.status === 402) {
+      hint = ' The upstream provider for this model ran out of quota or credits. Switch to auto/best-free or another free model in Settings.';
+    }
   } else if (res.status >= 500) {
     // NVIDIA's shared endpoint answers 500 {"message":"Failed to generate
     // completions"} for a minimal request as readily as a complex one, which
@@ -539,7 +545,7 @@ async function consumeStream(res, onEvent) {
     if (chunk.error) {
       throw new LLMError(chunk.error.message || JSON.stringify(chunk.error));
     }
-    if (chunk.model) responseModel = chunk.model;
+    if (chunk.model && chunk.model !== 'keepalive') responseModel = chunk.model;
     if (chunk.usage) {
       usage = chunk.usage;
       onEvent({ type: 'usage', usage: chunk.usage });

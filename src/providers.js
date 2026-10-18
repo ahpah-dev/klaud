@@ -395,13 +395,19 @@ async function getFreeCatalog({ probeLocal = true } = {}) {
   }
 
   if (probeLocal) {
+    const { findOmniRouteKey } = require('./lib/omniroute');
+    const autoOmniKey = typeof findOmniRouteKey === 'function' ? findOmniRouteKey() : '';
     await Promise.all(
       entries
         .filter((e) => /localhost|127\.0\.0\.1/.test(e.baseUrl))
         .map(async (entry) => {
           try {
-            const res = await fetch(`${entry.baseUrl}/models`, { signal: AbortSignal.timeout(1_500) });
-            entry.localRunning = res.ok;
+            const headers = {};
+            if (entry.id === 'omniroute' && autoOmniKey) {
+              headers.Authorization = `Bearer ${autoOmniKey}`;
+            }
+            const res = await fetch(`${entry.baseUrl}/models`, { headers, signal: AbortSignal.timeout(1_500) });
+            entry.localRunning = res.ok || (entry.id === 'omniroute' && res.status === 401);
             if (res.ok) {
               const json = await res.json().catch(() => null);
               // Normalise to the same shape as the OpenRouter list: the UI
@@ -417,11 +423,19 @@ async function getFreeCatalog({ probeLocal = true } = {}) {
                     contextLength: (typeof m === 'object' && m.context_length) || 0,
                     tools: typeof m === 'object' && Array.isArray(m.supported_parameters)
                       ? m.supported_parameters.includes('tools')
-                      : null,
+                      : (typeof m === 'object' && m.capabilities?.tool_calling !== undefined ? Boolean(m.capabilities.tool_calling) : true),
                   };
                 })
                 .filter(Boolean);
-              entry.localModels = ids.slice(0, 25);
+              if (entry.id === 'omniroute' && !ids.some((m) => m.id === 'auto')) {
+                ids.unshift({
+                  id: 'auto',
+                  name: 'auto (OmniRoute intelligent router)',
+                  contextLength: 128000,
+                  tools: true,
+                });
+              }
+              entry.localModels = ids.slice(0, 30);
             }
           } catch {
             entry.localRunning = false;

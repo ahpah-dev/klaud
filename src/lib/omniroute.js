@@ -48,6 +48,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const { spawn } = require('child_process');
 
 /* ------------------------------------------------------------------ *
@@ -65,8 +66,8 @@ const NODE_REQUIREMENT_TEXT = 'Node 22.22.2 or newer within 22.x, or 24.x throug
 const INSTALL_COMMAND = 'npm install -g omniroute';
 const INSTALL_ARGS = ['install', '-g', 'omniroute'];
 
-const PROBE_TIMEOUT_MS = 1_500;
-const START_TIMEOUT_MS = 60_000;
+const PROBE_TIMEOUT_MS = 2_500;
+const START_TIMEOUT_MS = 90_000;
 const POLL_MS = 750;
 const INSTALL_TIMEOUT_MS = 10 * 60_000;
 
@@ -425,6 +426,7 @@ function startDetached({ binary, spawnFn, platform = process.platform }) {
 async function ensureRunning({
   allowStart = false,
   baseUrl = DEFAULT_BASE_URL,
+  apiKey = '',
   nodeVersion = process.versions.node,
   timeoutMs = PROBE_TIMEOUT_MS,
   startTimeoutMs = START_TIMEOUT_MS,
@@ -435,7 +437,7 @@ async function ensureRunning({
   platform = process.platform,
 } = {}) {
   const root = trimTrailingSlash(baseUrl);
-  const current = await probe({ baseUrl: root, timeoutMs, fetch: fetchImpl });
+  const current = await probe({ baseUrl: root, apiKey, timeoutMs, fetch: fetchImpl });
 
   if (current.running) {
     return {
@@ -470,6 +472,20 @@ async function ensureRunning({
   }
 
   if (current.reachable) {
+    const isAuth = AUTH_STATUSES.includes(current.status) || /authentication required|invalid.*api.*key/i.test(current.error || '');
+    if (isAuth) {
+      return {
+        ok: false,
+        started: false,
+        alreadyRunning: true,
+        stage: 'auth',
+        baseUrl: root,
+        probe: current,
+        message: `OmniRoute is answering on ${originOf(root)}, but authentication is required: ${current.error}`,
+        hint:
+          'Open http://localhost:20128 in a browser, then Dashboard → Endpoints to view or copy the API key, and paste it in Settings.',
+      };
+    }
     return {
       ok: false,
       started: false,
@@ -553,10 +569,18 @@ async function ensureRunning({
   const deadline = startedAt + Math.max(0, startTimeoutMs);
   const wait = Number.isFinite(pollMs) && pollMs > 0 ? pollMs : POLL_MS;
   let latest = current;
+  let activeKey = apiKey || '';
 
   while (Date.now() < deadline) {
     await sleep(Math.min(wait, Math.max(0, deadline - Date.now())));
-    latest = await probe({ baseUrl: root, timeoutMs, fetch: fetchImpl });
+    if (!activeKey && typeof findOmniRouteKey === 'function') {
+      activeKey = findOmniRouteKey() || '';
+    }
+    latest = await probe({ baseUrl: root, apiKey: activeKey, timeoutMs, fetch: fetchImpl });
+    if (!latest.running && activeKey) {
+      const without = await probe({ baseUrl: root, timeoutMs, fetch: fetchImpl });
+      if (without.running) latest = without;
+    }
     if (latest.running) {
       return {
         ok: true,
@@ -565,6 +589,7 @@ async function ensureRunning({
         stage: 'started',
         baseUrl: root,
         pid: child?.pid,
+        apiKey: activeKey || undefined,
         elapsedMs: Date.now() - startedAt,
         probe: latest,
         message:
@@ -574,6 +599,33 @@ async function ensureRunning({
           `Klaud can point at ${root} with model "${DEFAULT_MODEL}" and no key at all. It runs ` +
           'detached, so it keeps answering after Klaud exits; start it again at any time with `omniroute`.',
       };
+    }
+    if (!latest.running && (AUTH_STATUSES.includes(latest.status) || /authentication required/i.test(latest.error || ''))) {
+      const discovered = typeof findOmniRouteKey === 'function' ? findOmniRouteKey() : '';
+      if (discovered && discovered !== activeKey) {
+        activeKey = discovered;
+        const second = await probe({ baseUrl: root, apiKey: activeKey, timeoutMs, fetch: fetchImpl });
+        if (second.running) {
+          latest = second;
+          return {
+            ok: true,
+            started: true,
+            alreadyRunning: false,
+            stage: 'started',
+            baseUrl: root,
+            pid: child?.pid,
+            apiKey: activeKey,
+            elapsedMs: Date.now() - startedAt,
+            probe: latest,
+            message:
+              `Started OmniRoute${child?.pid ? ` (pid ${child.pid})` : ''} and it answered on ${root} after ` +
+              `${seconds(Date.now() - startedAt)} — ${summariseModels(latest)}.`,
+            hint:
+              `Klaud can point at ${root} with model "${DEFAULT_MODEL}". It runs ` +
+              'detached, so it keeps answering after Klaud exits; start it again at any time with `omniroute`.',
+          };
+        }
+      }
     }
     if (spawnError) break;
     if (exit) break;
@@ -916,6 +968,23 @@ async function setupOmniRoute({
   const checks = [];
   const auth = await inspectStoredKey({ baseUrl: root, apiKey: storedApiKey, timeoutMs, fetch: fetchImpl });
 
+  if (!auth.withKey.running && !storedApiKey) {
+    const isAuth =
+      AUTH_STATUSES.includes(auth.withKey.status) ||
+      /authentication required|invalid.*api.*key/i.test(auth.withKey.error || '');
+    if (isAuth) {
+      const localKey = typeof findOmniRouteKey === 'function' ? findOmniRouteKey() : '';
+      if (localKey) {
+        const localProbe = await probe({ baseUrl: root, apiKey: localKey, timeoutMs, fetch: fetchImpl });
+        if (localProbe.running) {
+          auth.withKey = localProbe;
+          auth.key = localKey;
+          auth.rejected = false;
+        }
+      }
+    }
+  }
+
   checks.push({
     step: 'probe',
     ok: auth.withKey.running,
@@ -967,7 +1036,7 @@ async function setupOmniRoute({
   if (auth.withKey.running) {
     checks.push(...authChecks());
     const models = auth.withKey.models;
-    const autoPresent = models.includes(model);
+    const autoPresent = models.includes(model) || (model === 'auto' && (models.some((m) => m.startsWith('auto/')) || models.length > 0));
     checks.push({
       step: 'model',
       ok: autoPresent,
@@ -980,6 +1049,7 @@ async function setupOmniRoute({
       stage: 'running',
       baseUrl: root,
       model,
+      apiKey: auth.key || undefined,
       clearApiKey: false,
       alreadyRunning: true,
       started: false,
@@ -997,10 +1067,11 @@ async function setupOmniRoute({
   if (auth.rejected && auth.withoutKey?.running) {
     checks.push(...authChecks());
     const models = auth.withoutKey.models;
+    const autoPresent = models.includes(model) || (model === 'auto' && (models.some((m) => m.startsWith('auto/')) || models.length > 0));
     checks.push({
       step: 'model',
-      ok: models.includes(model),
-      detail: models.includes(model)
+      ok: autoPresent,
+      detail: autoPresent
         ? `the model list includes "${model}"`
         : `the model list does not include "${model}" — pick one of: ${models.slice(0, 8).join(', ') || '(none listed)'}`,
     });
@@ -1053,6 +1124,30 @@ async function setupOmniRoute({
         'If you created an API key in OmniRoute\'s dashboard (Endpoints), paste that key in Settings — ' +
         'otherwise check the request in its dashboard or log to see why it is refusing, and note that ' +
         'Klaud has not been changed either way.',
+    };
+  }
+
+  /* ---------- it requires a key, and none was supplied ---------- */
+
+  if (
+    !auth.withKey.running &&
+    !storedApiKey &&
+    (AUTH_STATUSES.includes(auth.withKey.status) ||
+      /authentication required|invalid.*api.*key/i.test(auth.withKey.error || ''))
+  ) {
+    checks.push(...authChecks());
+    return {
+      ok: false,
+      stage: 'auth',
+      baseUrl: root,
+      model,
+      clearApiKey: false,
+      alreadyRunning: true,
+      started: false,
+      checks,
+      message: `OmniRoute is answering on ${root}, but authentication is required: ${auth.withKey.error || `HTTP ${auth.withKey.status}`}.`,
+      hint:
+        'Open http://localhost:20128 in a browser, then Dashboard → Endpoints to view or copy the API key, and paste it in Settings.',
     };
   }
 
@@ -1142,6 +1237,7 @@ async function setupOmniRoute({
   const start = await ensureRunning({
     allowStart,
     baseUrl: root,
+    apiKey: storedApiKey || '',
     nodeVersion,
     timeoutMs,
     startTimeoutMs,
@@ -1198,7 +1294,7 @@ async function setupOmniRoute({
   }
 
   const models = start.probe?.models || [];
-  const autoPresent = models.includes(model);
+  const autoPresent = models.includes(model) || (model === 'auto' && (models.some((m) => m.startsWith('auto/')) || models.length > 0));
   checks.push({
     step: 'model',
     ok: autoPresent,
@@ -1231,11 +1327,41 @@ async function setupOmniRoute({
   };
 }
 
+/**
+ * Automatically locate an active API key issued by a local OmniRoute instance.
+ * OmniRoute stores its keys in SQLite at `~/.omniroute/storage.sqlite`.
+ */
+function findOmniRouteKey({ homeDir = os.homedir() } = {}) {
+  try {
+    const dbPath = path.join(homeDir, '.omniroute', 'storage.sqlite');
+    if (!fs.existsSync(dbPath)) return null;
+    try {
+      const { DatabaseSync } = require('node:sqlite');
+      const db = new DatabaseSync(dbPath, { readOnly: true, open: true });
+      const row = db
+        .prepare('SELECT key FROM api_keys WHERE is_active = 1 ORDER BY last_used_at DESC, created_at DESC LIMIT 1')
+        .get();
+      if (row && typeof row.key === 'string' && row.key.trim()) {
+        return row.key.trim();
+      }
+    } catch {
+      // Fallback: search file for sk- pattern if sqlite module not present or locked
+      const content = fs.readFileSync(dbPath, 'latin1');
+      const match = content.match(/sk-[a-zA-Z0-9_\-]{20,}/);
+      if (match) return match[0];
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
 module.exports = {
   probe,
   ensureRunning,
   install,
   setupOmniRoute,
+  findOmniRouteKey,
   // Exported so the catalogue and the tests share one source of truth instead of
   // restating OmniRoute's engine range in two places that can drift apart.
   DEFAULT_BASE_URL,
