@@ -33,7 +33,7 @@
   "main": "src/server.js",
   "type": "commonjs",
   "bin": {
-    "klaud": "./bin/klaud.js"
+    "klaud": "bin/klaud.js"
   },
   "engines": {
     "node": ">=18"
@@ -46,5 +46,8 @@
     "check-nvidia": "node tools/check-nvidia.js",
     "test": "node test/run.js && node test/markdown.mjs && node test/ui-static.js && node test/skills.js && node test/bundled-skills.js && node test/plugins.js && node test/agents.js && node test/extensions.js && node test/connectors.js && node test/oauth.js && node test/connectors-gmail.js && node test/api-tool.js && node test/cloudflare-token.mjs && node test/cloudflare-setup.js && node test/cloudflare-errors.js && node test/providers.js && node test/omniroute.js && node test/e2e-http.js && node test/auth-recovery.js && node test/folder-picker.js && node test/browser-extract.js && node test/browser-tools.js && node test/browser.js && node test/cli.js"
   },
-  "dependencies": {}
+  "directories": {
+    "doc": "docs",
+    "test": "test"
+  }
 }

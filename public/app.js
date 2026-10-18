@@ -2195,15 +2195,30 @@ function openCli() {
       <p class="fp-lede">
         The same agent, in your terminal: replies stream as they are written, tool calls
         appear as they happen, and approvals are a single keypress. Zero dependencies —
-        one <code>npm i -g</code> and the <code>klaud</code> command is on your PATH.
+        clone it, run one <code>npm i -g</code>, and the <code>klaud</code> command is on
+        your PATH.
       </p>
 
       <div class="cli-install">
-        <code>npm i -g github:ahpah-dev/klaud</code>
-        <button class="btn btn-ghost btn-sm" data-copy-cmd="npm i -g github:ahpah-dev/klaud">
-          ${icon('i-terminal')} Copy
-        </button>
+        <div class="cli-install-row">
+          <code>git clone https://github.com/ahpah-dev/klaud.git</code>
+          <button class="btn btn-ghost btn-sm" data-copy-cmd="git clone https://github.com/ahpah-dev/klaud.git">
+            ${icon('i-terminal')} Copy
+          </button>
+        </div>
+        <div class="cli-install-row">
+          <code>cd klaud &amp;&amp; npm i -g .</code>
+          <button class="btn btn-ghost btn-sm" data-copy-cmd="cd klaud && npm i -g .">
+            ${icon('i-terminal')} Copy
+          </button>
+        </div>
       </div>
+      <p class="cli-install-note">
+        A folder install works on every npm, including npm 12, which ships with
+        <code>allow-git</code> and <code>allow-remote</code> set to <code>none</code>.
+        Where git installs are allowed, <code>npm i -g github:ahpah-dev/klaud</code> is the
+        one-step version.
+      </p>
 
       <div class="cli-grid">
         <div class="cli-card">

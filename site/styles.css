@@ -1149,6 +1149,24 @@ code {
 }
 
 /* ---------- Klaud CLI ---------- */
+.cli-steps {
+  display: grid;
+  gap: 10px;
+  margin: 20px 0 16px;
+}
+
+.cli-hint {
+  font-size: 0.93rem;
+  line-height: 1.6;
+  color: var(--ink-faint);
+  margin-bottom: 22px;
+}
+
+.cli-hint code {
+  font-size: 0.85em;
+  white-space: normal;
+}
+
 .cli-showcase .window {
   margin: 0;
 }

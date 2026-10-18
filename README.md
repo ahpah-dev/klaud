@@ -341,11 +341,16 @@ and the same `~/.klaud` as the web app. Not a wrapper around it — both front
 ends call the same engine in-process.
 
 ```sh
-npm i -g github:ahpah-dev/klaud
+git clone https://github.com/ahpah-dev/klaud.git
+cd klaud && npm i -g .
 
 klaud                            # interactive session
 klaud "fix the failing test"     # one prompt, then exit
 ```
+
+A folder install works on every npm, including npm 12, which ships with
+`allow-git` and `allow-remote` set to `none`. Where git installs are allowed,
+`npm i -g github:ahpah-dev/klaud` does the same thing in one step.
 
 | command | what it does |
 | --- | --- |
