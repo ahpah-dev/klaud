@@ -14,7 +14,8 @@ const llm = require('../llm');
 const agent = require('../agent');
 const extensions = require('../extensions');
 const path = require('path');
-const { sym, choose } = require('./ui');
+const { sym, choose, panel } = require('./ui');
+const { diffStats } = require('./render');
 
 /** Local endpoints (Ollama, LM Studio, OmniRoute) do not need a key. */
 function isLoopback(baseUrl) {
@@ -48,6 +49,16 @@ async function loadSettings(flags = {}) {
     settings.approvalMode = mode;
   }
   if (flags['--yes']) settings.approvalMode = 'auto';
+  if (flags['--effort']) {
+    const value = String(flags['--effort']).toLowerCase();
+    if (!['default', 'low', 'medium', 'high'].includes(value)) {
+      throw Object.assign(
+        new Error(`--effort must be default, low, medium or high (got ${value})`),
+        { code: 'EUSAGE' }
+      );
+    }
+    settings.reasoningEffort = value === 'default' ? '' : value;
+  }
 
   llm.configureReasoningEffort(settings.reasoningEffort);
   return settings;
@@ -79,6 +90,8 @@ function promptFor(prompt) {
 /**
  * Approvals, terminal edition.
  *
+ * The call is boxed so it is impossible to miss what is about to happen — a
+ * panel you have to answer, not a line that scrolls past between two others.
  * Single keypress, no Enter: y allow once · n deny · a allow for the rest of
  * this session · r switch the session to read-only. "a" and "r" mutate
  * `session.approvalMode`, which is exactly what the in-app buttons do — the
@@ -88,15 +101,21 @@ function makeApproval({ c, interactive, session }) {
   return async ({ name, args, permission, reason }) => {
     if (!interactive) return false;
 
-    const summary = describeCall(name, args);
+    const detail = describeCall(name, args);
+    const rows = [];
+    if (detail) rows.push(clip(detail, 70));
+    else rows.push(c.dim('(no arguments)'));
+    if (reason) rows.push(c.dim(clip(reason, 70)));
+    rows.push(c.dim(`permission ${permission}`));
+
+    process.stderr.write(`\n${panel(`Allow ${name}?`, rows, c, { max: 72 })}\n`);
     process.stderr.write(
-      `\n${c.bold('Allow this?')} ${c.dim(`permission: ${permission}`)}\n` +
-        `  ${c.accent(sym.arrow)} ${c.bold(name)}${summary ? ` ${summary}` : ''}\n` +
-        (reason ? `${c.dim(`  ${reason}`)}\n` : '')
+      `${c.dim('  y')} allow once ${c.dim(sym.dot)} ${c.dim('n')} deny ${c.dim(sym.dot)} ` +
+        `${c.dim('a')} always ${c.dim(sym.dot)} ${c.dim('r')} read-only\n`
     );
 
     const answer = await choose(
-      'Approve',
+      '  ›',
       [
         { key: 'y', value: 'yes', default: true },
         { key: 'n', value: 'no' },
@@ -120,11 +139,17 @@ function makeApproval({ c, interactive, session }) {
   };
 }
 
+/** One line of what the call will actually touch — the part a human judges. */
 function describeCall(name, args) {
   if (!args || typeof args !== 'object') return '';
   const value = (key) => (typeof args[key] === 'string' ? args[key] : '');
+  if (name === 'run_command') return value('command') || value('description');
+  if (name === 'edit_file') {
+    const stats = diffStats('edit_file', args);
+    const suffix = stats ? `  (+${stats.added} −${stats.removed})` : '';
+    return `${value('path')}${suffix}`;
+  }
   return (
-    value('command') ||
     value('path') ||
     value('url') ||
     value('pattern') ||
@@ -132,6 +157,11 @@ function describeCall(name, args) {
     value('description') ||
     ''
   );
+}
+
+function clip(text, max) {
+  const value = String(text ?? '').replace(/\s+/g, ' ').trim();
+  return value.length > max ? `${value.slice(0, max - 1)}…` : value;
 }
 
 /**
@@ -178,6 +208,9 @@ async function runPrompt({
 
   const approvalMode = session.approvalMode || settings.approvalMode;
   const requestApproval = makeApproval({ c: renderer.c, interactive, session });
+
+  // The "thinking" beat belongs to the turn, not to whichever front end ran it.
+  renderer.begin();
 
   const result = await agent.runAgentTurn({
     settings,

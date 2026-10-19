@@ -116,6 +116,7 @@ const dom = {
   sendIcon: el('send-icon'),
   modelName: el('model-name'),
   modelDot: el('model-dot'),
+  modelEffort: el('model-effort'),
   composerModeLabel: el('composer-mode-label'),
   modeToggle: el('mode-toggle'),
   wsPath: el('ws-path'),
@@ -265,6 +266,22 @@ function formatTime(ms) {
 function setEmptyShell(empty) {
   document.querySelector('.app')?.classList.toggle('is-empty', empty);
   positionSendButton(empty);
+  positionAttachButton(empty);
+}
+
+/**
+ * The + moves with the send button between the two bars: on the title screen
+ * it leads the chip row inside the card (where the reference puts it), and in a
+ * conversation it sits in the field at the left of the text. prepended in both
+ * cases, so it is the first thing in whichever row it lands in.
+ */
+function positionAttachButton(empty) {
+  const attach = el('attach-btn');
+  const row = document.querySelector('.composer-row');
+  const field = document.querySelector('.prompt-field');
+  if (!attach || !row || !field) return;
+  const target = empty ? row : field;
+  if (attach.parentElement !== target) target.prepend(attach);
 }
 
 function positionSendButton(empty) {
@@ -779,6 +796,78 @@ function findArtifactItem(id) {
   return null;
 }
 
+/* ------------------------------------------------------------------ *
+ * The artifact pane's width — drag the left edge
+ *
+ * One custom property is the whole mechanism: the grid template reads
+ * --pane-width, a drag writes it, and localStorage remembers it so the pane
+ * comes back the size it was left. Both sides keep a floor, because a drag
+ * that can squeeze the transcript (or the preview) to nothing is a trap.
+ * ------------------------------------------------------------------ */
+
+const PANE_MIN_WIDTH = 320;
+const PANE_MAX_RATIO = 0.8;
+const PANE_WIDTH_KEY = 'klaud.artifactWidth';
+
+function paneWidthBounds() {
+  const main = document.querySelector('.main');
+  const total = Math.round((main ? main.getBoundingClientRect().width : window.innerWidth) || window.innerWidth);
+  const max = Math.max(
+    PANE_MIN_WIDTH + 40,
+    Math.min(Math.round(window.innerWidth * PANE_MAX_RATIO), total - 320)
+  );
+  return { min: PANE_MIN_WIDTH, max };
+}
+
+function storedPaneWidth() {
+  try {
+    const value = Number(localStorage.getItem(PANE_WIDTH_KEY));
+    return Number.isFinite(value) && value > 0 ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function defaultPaneWidth() {
+  return Math.min(600, window.innerWidth * 0.46);
+}
+
+/** Set the pane width, clamped, and keep the handle's ARIA values honest. */
+function applyPaneWidth(width, { persist = true } = {}) {
+  const main = document.querySelector('.main');
+  if (!main) return 0;
+  const { min, max } = paneWidthBounds();
+  const clamped = Math.max(min, Math.min(max, Math.round(Number(width) || min)));
+  main.style.setProperty('--pane-width', `${clamped}px`);
+  const handle = main.querySelector('.ap-resizer');
+  if (handle) {
+    handle.setAttribute('aria-valuenow', String(clamped));
+    handle.setAttribute('aria-valuemin', String(min));
+    handle.setAttribute('aria-valuemax', String(max));
+  }
+  if (persist) {
+    try {
+      localStorage.setItem(PANE_WIDTH_KEY, String(clamped));
+    } catch { /* private mode */ }
+  }
+  return clamped;
+}
+
+function restorePaneWidth() {
+  applyPaneWidth(storedPaneWidth() ?? defaultPaneWidth(), { persist: false });
+}
+
+function resetPaneWidth() {
+  const main = document.querySelector('.main');
+  if (main) main.style.removeProperty('--pane-width');
+  try {
+    localStorage.removeItem(PANE_WIDTH_KEY);
+  } catch { /* private mode */ }
+  const pane = el('artifact-pane');
+  const handle = document.querySelector('.ap-resizer');
+  if (pane && handle) handle.setAttribute('aria-valuenow', String(Math.round(pane.getBoundingClientRect().width || 0)));
+}
+
 function renderArtifactPane() {
   const pane = el('artifact-pane');
   const main = document.querySelector('.main');
@@ -827,6 +916,9 @@ function renderArtifactPane() {
   pane.hidden = false;
   main.classList.add('artifact-pane-open');
   pane.innerHTML = `
+    <div class="ap-resizer" role="separator" tabindex="0" aria-orientation="vertical"
+         aria-label="Resize the artifact panel" aria-valuemin="320" aria-valuemax="1200" aria-valuenow="600"
+         title="Drag to resize · double-click to reset"></div>
     <div class="ap-head">
       <div class="ap-titles">
         <span class="ap-title">${escapeHtml(a.name)}</span>
@@ -838,6 +930,8 @@ function renderArtifactPane() {
     <div class="ap-body">${body}</div>`;
 
   if (view === 'doc' && !showCode) decorateCodeBlocks(pane.querySelector('.ap-doc') || pane);
+  // A re-render recreates the handle, so its ARIA values are repainted here.
+  restorePaneWidth();
 }
 
 function openArtifact(id) {
@@ -876,6 +970,59 @@ function wireArtifactPane() {
     }
     if (event.target.closest('.ap-close')) closeArtifact();
   });
+  /* Drag the left edge to resize. Pointer events throughout, so a mouse, a pen
+     and a touch all work; the body class stops text selection and keeps the
+     cursor a resize arrow for the whole drag. */
+  pane.addEventListener('pointerdown', (event) => {
+    const handle = event.target.closest('.ap-resizer');
+    if (!handle || (event.button !== undefined && event.button !== 0)) return;
+    event.preventDefault();
+    handle.focus({ preventScroll: true });
+    const startX = event.clientX;
+    const startWidth = pane.getBoundingClientRect().width;
+    document.body.classList.add('pane-resizing');
+
+    const move = (moveEvent) => applyPaneWidth(startWidth + (startX - moveEvent.clientX));
+    const finish = () => {
+      document.body.classList.remove('pane-resizing');
+      document.removeEventListener('pointermove', move);
+      document.removeEventListener('pointerup', finish);
+      document.removeEventListener('pointercancel', finish);
+    };
+    document.addEventListener('pointermove', move);
+    document.addEventListener('pointerup', finish);
+    document.addEventListener('pointercancel', finish);
+  });
+
+  // Double-click restores the stylesheet's own default width.
+  pane.addEventListener('dblclick', (event) => {
+    if (event.target.closest('.ap-resizer')) resetPaneWidth();
+  });
+
+  /* The handle is a separator: arrows resize, Shift for bigger steps, Home and
+     End for the two limits. Same contract as any other ARIA separator. */
+  pane.addEventListener('keydown', (event) => {
+    if (!event.target.closest('.ap-resizer')) return;
+    const current = pane.getBoundingClientRect().width;
+    const step = event.shiftKey ? 96 : 24;
+    const bounds = paneWidthBounds();
+    let next = null;
+    if (event.key === 'ArrowLeft') next = current + step;
+    else if (event.key === 'ArrowRight') next = current - step;
+    else if (event.key === 'Home') next = bounds.min;
+    else if (event.key === 'End') next = bounds.max;
+    else return;
+    event.preventDefault();
+    applyPaneWidth(next);
+  });
+
+  // A narrower window may leave a stored width larger than the space allows.
+  window.addEventListener('resize', () => {
+    const main = document.querySelector('.main');
+    if (!main || !main.classList.contains('artifact-pane-open')) return;
+    applyPaneWidth(pane.getBoundingClientRect().width, { persist: false });
+  });
+
   document.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape' || !state.artifact) return;
     // A modal above the pane owns Escape while it is open.
@@ -1292,7 +1439,14 @@ function restoreSidebar() {
 function renderChrome() {
   const config = state.config || {};
   dom.modelName.textContent = shortModelName(config.model) || 'no model';
-  dom.modelDot.className = `dot${config.hasApiKey ? '' : ' off'}`;
+  dom.modelDot.className = `dot${config.hasApiKey || isLocalEndpoint(config.baseUrl) ? '' : ' off'}`;
+  // The chip carries the pair the reference shows — model, then effort — so
+  // the level is visible without opening anything.
+  const effort = String(config.reasoningEffort || '');
+  dom.modelEffort.textContent = effortLabel(effort);
+  dom.modelEffort.title = `Reasoning effort: ${
+    (REASONING_STEPS.find((s) => s.value === effort) || REASONING_STEPS[0]).label
+  }`;
   const mode = config.approvalMode || 'auto';
   const modeText = mode === 'readonly' ? 'read-only' : mode === 'ask' ? 'ask first' : 'auto-run';
   dom.composerModeLabel.textContent = modeText;
@@ -1326,6 +1480,84 @@ function renderChrome() {
           shortPath(state.config?.workspace || '')
         )}`
       : HINTS[state.mode === 'cowork' ? 'cowork' : 'chat'];
+}
+
+/* ------------------------------------------------------------------ *
+ * Model menu — the chip's own dropdown, where the reference puts Effort
+ * ------------------------------------------------------------------ */
+
+function modelMenuOpen() {
+  return !el('model-menu').hidden;
+}
+
+/**
+ * Paint the menu from live config: the current model with its full id, the
+ * effort value on the Effort row, the option list, and the footer note that
+ * says whether this endpoint will actually receive the effort.
+ */
+function renderModelMenu() {
+  const config = state.config || {};
+  const full = String(config.model || '').trim();
+  const short = shortModelName(full);
+  el('mm-model-title').textContent = short || 'No model';
+  // The subtitle is the untruncated truth: the full id when the chip shortens
+  // it, otherwise the endpoint — so the row says what is actually running.
+  let host = '';
+  try {
+    host = new URL(String(config.baseUrl || '')).hostname;
+  } catch { /* no usable url — the title alone carries the row */ }
+  el('mm-model-sub').textContent = full && full !== short ? full : host;
+
+  const effort = String(config.reasoningEffort || '');
+  el('mm-effort-value').textContent = effortLabel(effort);
+  el('mm-effort-list').innerHTML = REASONING_STEPS.map((step) => {
+    const on = step.value === effort;
+    return `<button class="mm-item mm-opt" type="button" role="menuitemradio" aria-checked="${on}" data-effort="${escapeHtml(step.value)}">
+      <span>${escapeHtml(step.label)}</span>${on ? icon('i-check', 'mm-check') : ''}
+    </button>`;
+  }).join('');
+
+  el('mm-foot').textContent = reasoningEffortSent(config.baseUrl)
+    ? 'Effort is sent to this endpoint on every request. Higher effort thinks longer and costs more tokens.'
+    : 'This endpoint is not known to accept an effort setting, so Klaud sends none — a parameter it rejects can fail the whole request.';
+}
+
+/** The effort options fold under the Effort row, as the reference's do. */
+function setEffortList(open) {
+  el('mm-effort-list').hidden = !open;
+  el('mm-effort').setAttribute('aria-expanded', String(open));
+  // The menu changed height, so re-measure against the room — the same
+  // re-place the + menu does when it switches views.
+  if (!el('model-menu').hidden) requestAnimationFrame(() => placeDropdown(el('model-menu')));
+}
+
+function openModelMenu() {
+  renderModelMenu();
+  setEffortList(false);
+  el('model-menu').hidden = false;
+  // Same routine, same box as the + menu — the two open from one line.
+  placeDropdown(el('model-menu'));
+  el('model-pill').setAttribute('aria-expanded', 'true');
+}
+
+function closeModelMenu() {
+  el('model-menu').hidden = true;
+  el('model-pill').setAttribute('aria-expanded', 'false');
+}
+
+/**
+ * Save an effort level chosen from the menu. The server answers with the full
+ * config, so one repaint keeps the chip, the menu and Settings in step.
+ */
+async function chooseEffort(value) {
+  try {
+    state.config = await api('/api/settings', { method: 'PATCH', body: { reasoningEffort: value } });
+    renderChrome();
+    renderModelMenu();
+    setEffortList(false); // chosen — the submenu folds, like the reference's
+  } catch (err) {
+    toast(err.message);
+  }
 }
 
 /* ------------------------------------------------------------------ *
@@ -1396,13 +1628,15 @@ function addNotice(message, level = 'info') {
 async function submit() {
   const text = dom.prompt.value.trim();
   if (!text || state.streaming) return;
+  closePlusMenu();
 
-  if (!state.config?.hasApiKey && !state.config?.model) {
+  const keylessLocal = isLocalEndpoint(state.config?.baseUrl);
+  if (!state.config?.hasApiKey && !keylessLocal && !state.config?.model) {
     openSettings();
     toast('Add an API key and pick a model first.');
     return;
   }
-  if (!state.config?.hasApiKey) {
+  if (!state.config?.hasApiKey && !keylessLocal) {
     openSettings();
     toast('Add your OpenAI-compatible API key in Settings.');
     return;
@@ -2113,11 +2347,6 @@ function renderProviderCard(provider) {
       <p class="pdetail">${escapeHtml(provider.detail)}</p>
       <div class="plimits">${icon('i-info')}<span>${escapeHtml(provider.limits)}</span></div>
       ${
-        provider.caveat
-          ? `<div class="pcaveat">${icon('i-warn')}<span>${escapeHtml(provider.caveat)}</span></div>`
-          : ''
-      }
-      ${
         sourceLink || checkLink
           ? `<div class="plinks">${sourceLink}${checkLink}</div>`
           : ''
@@ -2431,11 +2660,16 @@ function openCli() {
       <p class="fp-lede">
         The same agent, in your terminal: replies stream as they are written, tool calls
         appear as they happen, and approvals are a single keypress. Zero dependencies —
-        clone it, run one <code>npm i -g</code>, and the <code>klaud</code> command is on
-        your PATH.
+        <code>npm i -g @ahpah/klaud</code> and the <code>klaud</code> command is on your PATH.
       </p>
 
       <div class="cli-install">
+        <div class="cli-install-row">
+          <code>npm i -g @ahpah/klaud</code>
+          <button class="btn btn-ghost btn-sm" data-copy-cmd="npm i -g @ahpah/klaud">
+            ${icon('i-terminal')} Copy
+          </button>
+        </div>
         <div class="cli-install-row">
           <code>git clone https://github.com/ahpah-dev/klaud.git</code>
           <button class="btn btn-ghost btn-sm" data-copy-cmd="git clone https://github.com/ahpah-dev/klaud.git">
@@ -2450,7 +2684,8 @@ function openCli() {
         </div>
       </div>
       <p class="cli-install-note">
-        A folder install works on every npm, including npm 12, which ships with
+        The registry download is the one-line path. From source instead: clone, then a
+        folder install — which works on every npm, including npm 12, ships with
         <code>allow-git</code> and <code>allow-remote</code> set to <code>none</code>.
         Where git installs are allowed, <code>npm i -g github:ahpah-dev/klaud</code> is the
         one-step version.
@@ -2487,9 +2722,10 @@ function openCli() {
       </div>
 
       <p class="cli-note">
-        In a chat session: <code>/help</code>, <code>/model</code>, <code>/permissions</code>,
-        <code>/skills</code>, <code>/clear</code>, <code>/exit</code>. Ctrl+C cancels a running
-        turn; Ctrl+C on an empty line exits.
+        In a chat session: <code>/help</code>, <code>/model</code>, <code>/effort</code>,
+        <code>/permissions</code>, <code>/skills</code>, <code>/cost</code>, <code>/clear</code>,
+        <code>/exit</code>. Tab completes a command, a trailing <code>\</code> continues the prompt,
+        and history survives restarts. Ctrl+C cancels a running turn; a second one exits.
       </p>
     </div>
     <div class="modal-foot">
@@ -2570,12 +2806,6 @@ async function openFreeProviders() {
           ${live.endpointsProbed || 0} endpoints probed ·
           ${live.openRouterFreeModels || 0} OpenRouter models priced at zero right now ·
           ${localUp.length ? `${localUp.length} local server(s) running` : 'no local servers detected'}
-          <div class="fp-caveat">
-            Rate-limit figures are not verified. Google and Groq have both stopped
-            publishing fixed free-tier numbers and now tell you to check your own account,
-            so those cards are labelled <em>not published</em> and every card links to the
-            provider's own page.
-          </div>
         </div>
       </div>
       ${catalog.providers.map(renderProviderCard).join('')}
@@ -2600,11 +2830,15 @@ async function openFreeProviders() {
             </details>`
           : ''
       }
-      <div class="fp-note">${icon('i-info')}<span>${escapeHtml(catalog.note)}${
+      ${
+        /* The standing note is gone — it was a banner-length warning on every
+           open, and the per-card labels already say published/not tested where
+           it matters. The live-lookup failure is not decoration though: it only
+           renders when something actually failed. */
         catalog.liveChecks?.openRouterError
-          ? ` The live model lookup failed (${escapeHtml(catalog.liveChecks.openRouterError)}), so cached results are shown.`
+          ? `<div class="fp-note">${icon('i-info')}<span>The live model lookup failed (${escapeHtml(catalog.liveChecks.openRouterError)}), so cached results are shown.</span></div>`
           : ''
-      }</span></div>`;
+      }`;
     wireProviderCards(body, () => {
       closeModal();
       renderChrome();
@@ -2704,6 +2938,33 @@ const REASONING_STEPS = [
   { value: 'medium', label: 'Medium' },
   { value: 'high', label: 'High' },
 ];
+
+/**
+ * Chip and menu wording for an effort value.
+ *
+ * The full label for the unset state is "Provider default" — right for the
+ * Settings slider, far too long for a chip that sits beside the model name.
+ * The chip says "Default"; the menu's option list keeps the full wording.
+ */
+function effortLabel(value) {
+  const step = REASONING_STEPS.find((s) => s.value === String(value || ''));
+  if (!step) return 'Default';
+  return step.value ? step.label : 'Default';
+}
+
+/**
+ * A model served from this machine needs no API key (Ollama, LM Studio, vLLM).
+ * Same rule the engine applies, so the composer does not refuse to send for a
+ * local endpoint just because the key field is empty.
+ */
+function isLocalEndpoint(baseUrl) {
+  try {
+    const host = new URL(String(baseUrl || '')).hostname.toLowerCase();
+    return host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '0.0.0.0';
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Whether the saved base URL is one the client will send an effort to.
@@ -3415,14 +3676,15 @@ function renderWelcomeIfEmpty() {
 }
 
 /** Directory browser, rooted at the current workspace's drive. */
-function openFileBrowser(startPath, onPick) {
+function openFileBrowser(startPath, onPick, mode = 'folder') {
+  const pickingFile = mode === 'file';
   let current = startPath;
   let selected = startPath;
 
   mountModal(`
     <div class="modal-head">
       ${icon('i-folder')}
-      <h2>Choose a folder</h2>
+      <h2>${pickingFile ? 'Choose a file' : 'Choose a folder'}</h2>
       <button class="icon-btn" data-close aria-label="Close">${icon('i-close')}</button>
     </div>
     <div class="modal-body">
@@ -3430,17 +3692,19 @@ function openFileBrowser(startPath, onPick) {
         <label>Location</label>
         <input type="text" id="b-path" value="${escapeHtml(startPath || '')}" spellcheck="false"
                placeholder="C:\\path\\to\\folder" />
-        <div class="hint">Type a full path and press Enter to jump straight to it. Click any folder below to open it. Use <strong>New folder</strong> to create one.</div>
+        <div class="hint">Type a full path and press Enter to jump straight to it. Click any folder below to open it.${
+          pickingFile ? ' Click a file to choose it.' : ' Use <strong>New folder</strong> to create one.'
+        }</div>
       </div>
       <div id="b-status"></div>
       <div class="model-list" id="b-list" style="max-height:42vh"></div>
     </div>
     <div class="modal-foot">
       <button class="btn btn-ghost" id="b-up">${icon('i-chevron')} Up</button>
-      <button class="btn btn-ghost" id="b-new">${icon('i-plus')} New folder</button>
+      ${pickingFile ? '' : `<button class="btn btn-ghost" id="b-new">${icon('i-plus')} New folder</button>`}
       <div class="grow"></div>
       <button class="btn btn-ghost" data-close>Cancel</button>
-      <button class="btn btn-primary" id="b-use">Use this folder</button>
+      <button class="btn btn-primary" id="b-use">${pickingFile ? 'Use this file' : 'Use this folder'}</button>
     </div>
   `);
 
@@ -3483,6 +3747,20 @@ function openFileBrowser(startPath, onPick) {
           )
           .join('')}
         ${
+          // In file mode the files are the point: pick one and its path goes
+          // into the prompt. Folder mode keeps the old, folders-only listing.
+          pickingFile
+            ? files
+                .map(
+                  (f) =>
+                    `<button type="button" class="model-item" data-file="${escapeHtml(f.name)}" title="Use ${escapeHtml(
+                      f.name
+                    )}">${icon('i-file')}<span>${escapeHtml(f.name)}</span></button>`
+                )
+                .join('')
+            : ''
+        }
+        ${
           dirs.length
             ? ''
             : `<div class="status-line" style="border:0;background:none">${(files.length
@@ -3495,14 +3773,23 @@ function openFileBrowser(startPath, onPick) {
             : ''
         }`;
 
-      // The button names the folder it will select, so "Use this folder" is
-      // never ambiguous about which folder "this" means.
-      el('b-use').textContent = `Use "${shortName}"`;
+      // The button names the item it will select, so "Use this file/folder" is
+      // never ambiguous about which "this" means.
+      el('b-use').textContent = pickingFile ? `Use "${shortName}"` : `Use "${shortName}"`;
 
       list.querySelectorAll('[data-dir]').forEach((node) => {
         node.addEventListener('click', () => {
           const sep = current.includes('\\') ? '\\' : '/';
           load(`${current.replace(/[\\/]$/, '')}${sep}${node.dataset.dir}`);
+        });
+      });
+      list.querySelectorAll('[data-file]').forEach((node) => {
+        node.addEventListener('click', () => {
+          const sep = current.includes('\\') ? '\\' : '/';
+          selected = `${current.replace(/[\\/]$/, '')}${sep}${node.dataset.file}`;
+          pathInput.value = selected;
+          el('b-use').textContent = `Use "${node.dataset.file}"`;
+          setStatus(`Selected ${node.dataset.file}`, 'ok');
         });
       });
     } catch (err) {
@@ -3574,7 +3861,7 @@ function openFileBrowser(startPath, onPick) {
     if (parent && parent !== current) load(parent);
     else load(current.replace(/[^\\/]*$/, ''));
   });
-  el('b-new').addEventListener('click', showNewFolderForm);
+  el('b-new')?.addEventListener('click', showNewFolderForm);
   el('b-use').addEventListener('click', () => {
     onPick(selected || current);
     closeModal();
@@ -3771,6 +4058,176 @@ function applySkill(name) {
   dom.prompt.focus();
 }
 
+/* ------------------------------------------------------------------ *
+ * The + menu
+ *
+ * A dropdown under the field rather than a slash typed for you: the actions
+ * are things Klaud can actually do (open the skill list, change the working
+ * directory, connect an account, pick a provider), and the skill list inside
+ * it is the same list the slash menu paints, driven by the same cache.
+ * ------------------------------------------------------------------ */
+
+let plusView = null; // null when closed, 'root', or 'skills'
+
+/**
+ * The height floor `placeDropdown` decides with. Both root menus — the + list
+ * and the model menu with its effort list folded — measure under this, so the
+ * side they open on is decided by the same number for both. Raise it only if
+ * a root menu outgrows it; a wrong floor re-introduces the split decision.
+ */
+const DROPDOWN_MIN_HEIGHT = 270;
+
+function plusMenuOpen() {
+  const menu = el('plus-menu');
+  return Boolean(menu && !menu.hidden);
+}
+
+async function paintPlusMenu(view) {
+  const menu = el('plus-menu');
+  if (!menu) return;
+  // Re-place on every paint: the skills view is taller than the root list.
+  requestAnimationFrame(() => placeDropdown(menu));
+
+  if (view === 'skills') {
+    const skills = await skillsForMenu();
+    const rows = skills
+      .slice(0, 8)
+      .map(
+        (skill) => `
+        <button type="button" class="plus-item plus-skill" role="menuitem" data-plus-skill="${escapeHtml(skill.name)}">
+          <span class="plus-icon">${icon('i-list')}</span>
+          <span class="plus-label">/${escapeHtml(skill.name)}</span>
+          <span class="plus-desc">${escapeHtml(skill.description || '')}</span>
+        </button>`
+      )
+      .join('');
+    menu.innerHTML = `
+      <button type="button" class="plus-item plus-back" role="menuitem" data-plus="back">
+        <span class="plus-icon">${icon('i-chevron')}</span>
+        <span class="plus-label">Skills</span>
+      </button>
+      <div class="plus-sep" role="separator"></div>
+      ${
+        rows ||
+        `<div class="plus-empty">No skills installed yet. Add one as
+         <code>~/.klaud/skills/&lt;name&gt;/SKILL.md</code> or
+         <code>.klaud/skills/&lt;name&gt;/SKILL.md</code> in this workspace.</div>`
+      }`;
+    return;
+  }
+
+  const row = (action, iconId, label, trailing = '') => `
+    <button type="button" class="plus-item" role="menuitem" data-plus="${action}">
+      <span class="plus-icon">${icon(iconId)}</span>
+      <span class="plus-label">${label}</span>
+      ${trailing}
+    </button>`;
+  const caret = `<span class="plus-caret">${icon('i-chevron')}</span>`;
+  const shortcut = (keys) => `<span class="plus-shortcut">${keys}</span>`;
+
+  // Same recipe as the reference: an attach group, a separator, then the
+  // extend group with submenus. Every row here is wired to something Klaud
+  // actually has — rows the product cannot honour are not shipped, however
+  // nice they look in a menu.
+  menu.innerHTML =
+    row('files', 'i-file', 'Upload or add files', shortcut('Ctrl+U')) +
+    row('project', 'i-folder', 'Add to project', caret) +
+    '<div class="plus-sep" role="separator"></div>' +
+    row('skills', 'i-list', 'Skills', caret) +
+    row('connector', 'i-plug', 'Add connector', caret) +
+    row('provider', 'i-zap', 'Model provider', caret);
+}
+
+async function openPlusMenu(view = 'root') {
+  const menu = el('plus-menu');
+  if (!menu) return;
+  plusView = view;
+  await paintPlusMenu(view);
+  menu.hidden = false;
+  placeDropdown(menu);
+  menu.querySelector('.plus-item')?.focus();
+}
+
+/**
+ * Place a dropdown on whichever side has the room — and always clear of its
+ * button. Used for BOTH the + menu and the model menu: they are siblings in
+ * the same box and run this identical math, so they open from the exact same
+ * line — the same top edge when they drop below the card, the same bottom
+ * edge when they hang above it. Changing this for one changes it for both;
+ * that equality is the point.
+ *
+ * The reference tucks the menu a little *into* the prompt box's edge rather
+ * than hanging it below with a gap: 6px of overlap, which reads as attached.
+ * On the title screen the "box" is two elements (field + chip row) and the
+ * menus are children of the field, so the offset is measured from the *card's*
+ * bottom — otherwise they drop over the row and the + inside it, which is
+ * exactly the bug this replaced. In a conversation the composer is docked at
+ * the bottom, so there is rarely room below and they open upward with the
+ * same 6px tuck.
+ * Synchronous, so the placement lands before the browser paints. Call it with
+ * the menu already unhidden: it measures the menu's real height.
+ */
+function placeDropdown(menu) {
+  const composer = document.querySelector('.composer');
+  const row = document.querySelector('.composer-row');
+  if (!menu || !composer) return;
+  menu.style.top = 'auto';
+  menu.style.bottom = 'auto';
+  menu.classList.remove('is-up');
+
+  const composerRect = composer.getBoundingClientRect();
+  const empty = document.querySelector('.app')?.classList.contains('is-empty');
+  const cardBottom = empty && row ? row.getBoundingClientRect().bottom : composerRect.bottom;
+
+  const tuck = 6;
+  // One floor for both menus: each root menu is a little under this, so the
+  // room check evaluates to the same number for the + menu and the model
+  // menu and they can never pick opposite sides — that equality is the whole
+  // requirement. A view taller than the floor (the + menu's Skills list)
+  // still measures itself and keeps its own overflow guard.
+  const height = Math.max(menu.offsetHeight || 0, DROPDOWN_MIN_HEIGHT);
+  const roomBelow = window.innerHeight - cardBottom;
+
+  if (roomBelow >= height - tuck + 8) {
+    menu.style.top = `${cardBottom - composerRect.top - tuck}px`;
+  } else {
+    menu.style.bottom = `${composerRect.height - tuck}px`;
+    menu.classList.add('is-up');
+  }
+}
+
+function closePlusMenu(refocus = false) {
+  const menu = el('plus-menu');
+  plusView = null;
+  if (!menu || menu.hidden) return;
+  menu.hidden = true;
+  menu.replaceChildren();
+  if (refocus) el('attach-btn')?.focus();
+}
+
+/**
+ * "Upload or add files": pick a file in the workspace and drop its path into
+ * the prompt at the caret. The agent reads the file itself — what the message
+ * needs is where to look — and the picker already knows the workspace.
+ * Ctrl+U is the same action, so the shortcut in the menu is real.
+ */
+function pickFileIntoPrompt() {
+  const ws = state.config?.workspace || '';
+  openFileBrowser(ws, (picked) => {
+    const path = typeof picked === 'string' ? picked : picked && picked.path;
+    if (!path) return;
+    let rel = path;
+    if (ws && path.toLowerCase().startsWith(ws.toLowerCase())) {
+      rel = path.slice(ws.length).replace(/^[\\/]/, '');
+    }
+    const box = dom.prompt;
+    const at = typeof box.selectionStart === 'number' ? box.selectionStart : box.value.length;
+    box.value = box.value.slice(0, at) + rel + box.value.slice(at);
+    box.dispatchEvent(new Event('input', { bubbles: true }));
+    box.focus();
+  }, 'file');
+}
+
 function moveSkillSelection(delta) {
   if (!skillMenuItems.length) return;
   const count = skillMenuItems.length;
@@ -3813,19 +4270,78 @@ function cycleMode() {
 function wireEvents() {
   wireArtifactPane();
 
-  /* The + offers the same thing typing "/" offers: the skill list, without
-     asking anyone to know the slash exists. It only inserts the slash on an
-     empty field — over existing text the button is a focus, not an edit. */
+  /* The + opens a menu, not a slash: the things a turn can be given — skills,
+     the workspace it runs in, a connector, a provider — each jumping to the
+     panel that already does that work. Skills drills into the same list the
+     slash menu shows, so there is one implementation of it. */
   el('attach-btn')?.addEventListener('click', () => {
-    if (skillMenuOpen()) {
-      closeSkillMenu();
+    if (plusMenuOpen()) closePlusMenu();
+    else openPlusMenu('root');
+  });
+
+  // The shortcut the + menu advertises.
+  document.addEventListener('keydown', (event) => {
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'u') {
+      event.preventDefault();
+      closePlusMenu();
+      pickFileIntoPrompt();
+    }
+  });
+
+  el('plus-menu')?.addEventListener('click', async (event) => {
+    const item = event.target.closest('[data-plus], [data-plus-skill]');
+    if (!item) return;
+    const skill = item.getAttribute('data-plus-skill');
+    if (skill) {
+      closePlusMenu();
+      applySkill(skill);
       return;
     }
-    if (!dom.prompt.value) {
-      dom.prompt.value = '/';
-      dom.prompt.dispatchEvent(new Event('input', { bubbles: true }));
+    const action = item.getAttribute('data-plus');
+    if (action === 'skills') {
+      await openPlusMenu('skills');
+      return;
     }
-    dom.prompt.focus();
+    if (action === 'back') {
+      await openPlusMenu('root');
+      return;
+    }
+    closePlusMenu();
+    if (action === 'files') pickFileIntoPrompt();
+    else if (action === 'project') el('composer-workspace')?.click();
+    else if (action === 'connector') {
+      openSettings();
+      document.querySelector('[data-conn-panel]')?.scrollIntoView({ block: 'start' });
+    } else if (action === 'provider') openFreeProviders();
+  });
+
+  el('plus-menu')?.addEventListener('keydown', (event) => {
+    const items = Array.from(el('plus-menu').querySelectorAll('.plus-item'));
+    if (!items.length) return;
+    const at = items.indexOf(document.activeElement);
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      items[(at + 1) % items.length]?.focus();
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      items[(at - 1 + items.length) % items.length]?.focus();
+    } else if (event.key === 'Home') {
+      event.preventDefault();
+      items[0]?.focus();
+    } else if (event.key === 'End') {
+      event.preventDefault();
+      items[items.length - 1]?.focus();
+    } else if (event.key === 'Escape') {
+      // Handled here so the pane's Escape listener does not also fire.
+      event.stopPropagation();
+      closePlusMenu(true);
+    }
+  });
+
+  document.addEventListener('mousedown', (event) => {
+    if (!plusMenuOpen()) return;
+    if (event.target.closest('#plus-menu') || event.target.closest('#attach-btn')) return;
+    closePlusMenu();
   });
 
   dom.prompt.addEventListener('input', () => {
@@ -3894,10 +4410,32 @@ function wireEvents() {
   // button on screen and never two buttons doing the same job.
   el('collapse-sidebar').addEventListener('click', toggleSidebar);
   el('toggle-sidebar').addEventListener('click', toggleSidebar);
-  el('model-pill').addEventListener('click', () => {
+  el('model-pill').addEventListener('click', () => (modelMenuOpen() ? closeModelMenu() : openModelMenu()));
+  el('mm-model').addEventListener('click', () => {
+    closeModelMenu();
     // With no key yet, the useful destination is the free list, not a form.
     if (!state.config?.hasApiKey) openFreeProviders();
     else openSettings();
+  });
+  el('mm-effort').addEventListener('click', () => setEffortList(el('mm-effort-list').hidden));
+  el('mm-effort-list').addEventListener('click', (event) => {
+    const option = event.target.closest('[data-effort]');
+    if (option) chooseEffort(option.dataset.effort);
+  });
+  el('mm-more').addEventListener('click', () => {
+    closeModelMenu();
+    openFreeProviders();
+  });
+  // A click anywhere that is not the menu or its chip puts the menu away.
+  document.addEventListener('mousedown', (event) => {
+    if (!modelMenuOpen()) return;
+    if (event.target.closest('#model-menu') || event.target.closest('#model-pill')) return;
+    closeModelMenu();
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || !modelMenuOpen()) return;
+    closeModelMenu();
+    el('model-pill').focus();
   });
   el('workspace-chip').addEventListener('click', () => {
     openFileBrowser(state.config?.workspace, async (picked) => {

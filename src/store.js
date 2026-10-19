@@ -23,7 +23,11 @@ function dirs() {
 
 async function readJson(file, fallback = null) {
   try {
-    return JSON.parse(await fs.readFile(file, 'utf8'));
+    const raw = await fs.readFile(file, 'utf8');
+    /* A UTF-8 BOM is invisible and fatal to JSON.parse. Windows editors and
+       PowerShell's `Set-Content -Encoding utf8` both write one, and the failure
+       mode is nasty: every setting silently reverts to its default. */
+    return JSON.parse(raw.replace(/^\uFEFF/, ''));
   } catch {
     return fallback;
   }

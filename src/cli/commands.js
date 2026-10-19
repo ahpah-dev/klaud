@@ -20,7 +20,7 @@ const { PROJECT_ROOT, dataDir } = require('../config');
 const pkg = require('../../package.json');
 const { createRenderer } = require('./render');
 const turn = require('./turn');
-const { sym, table, defList, ask, secret, spinner } = require('./ui');
+const { sym, table, defList, ask, secret, endPrompts, spinner, fmtDuration, fmtTokens } = require('./ui');
 
 /** Mirrors store.js SETTING_KEYS, which is deliberately not exported. */
 const SETTING_KEYS = [
@@ -116,8 +116,9 @@ async function cmdRun({ flags, c, args, raw }) {
       session,
     });
 
-    const elapsed = ((Date.now() - startedAt) / 1000).toFixed(1);
+    const elapsed = Date.now() - startedAt;
     const toolsUsed = (result.toolCalls || []).filter((t) => !t.denied).length;
+    const tokens = (result.usage && result.usage.total_tokens) || 0;
 
     if (wantJson) {
       asJson({
@@ -131,14 +132,19 @@ async function cmdRun({ flags, c, args, raw }) {
         elapsedMs: Date.now() - startedAt,
       });
     } else if (!flags['--quiet']) {
-      const bits = [
-        `${result.steps} step${result.steps === 1 ? '' : 's'}`,
-        `${toolsUsed} tool${toolsUsed === 1 ? '' : 's'}`,
-        `${(result.usage && result.usage.total_tokens) || 0} tokens`,
-        `${elapsed}s`,
-      ];
       renderer.gap();
-      renderer.note(`${c.green(sym.ok)} ${c.dim(bits.join(' · '))}  ${c.dim(`session ${saved.id}`)}`);
+      if (result.finished === 'aborted') {
+        renderer.finish(`${c.yellow(sym.warn)} ${c.dim(`cancelled ${sym.dot} ${fmtDuration(elapsed)}`)}`);
+      } else {
+        const bits = [
+          fmtDuration(elapsed),
+          `${toolsUsed} tool${toolsUsed === 1 ? '' : 's'}`,
+          `${fmtTokens(tokens)} tokens`,
+        ];
+        renderer.finish(
+          `  ${c.green(sym.ok)} ${c.dim(bits.join(` ${sym.dot} `))} ${c.dim(`${sym.dot} session ${saved.id}`)}`
+        );
+      }
     }
 
     if (result.finished === 'error') return 1;
@@ -200,6 +206,25 @@ async function cmdInit({ flags, c, args }) {
       if (key) apiKey = key;
     }
 
+    /* A local server has whatever the user pulled, not the catalogue's example
+       model — asking for a model that is not installed fails on the first
+       prompt, so ask the server what it actually has and let the user pick. */
+    const installed = local ? await installedModels(provider) : [];
+    if (installed.length) {
+      out('');
+      out(c.dim(`Installed on ${provider.baseUrl}`));
+      const shown = installed.slice(0, 12);
+      shown.forEach((id, i) => out(`  ${c.bold(String(i + 1).padStart(2))}. ${id}`));
+      if (installed.length > shown.length) out(c.dim(`  … ${installed.length - shown.length} more`));
+      const pickModel = await ask(`Model [1-${shown.length}]`, { def: '1' });
+      const index = Math.max(0, Math.min(shown.length - 1, (Number(pickModel) || 1) - 1));
+      model = shown[index];
+    } else if (local) {
+      out('');
+      out(c.yellow(`  ${sym.warn} ${provider.baseUrl} did not answer with a model list — keeping ${provider.model}.`));
+      out(c.dim('    Pull a model first (`ollama pull qwen2.5-coder:7b`) or set one later: klaud model <id>'));
+    }
+
     const workspaceAnswer = await ask('Working directory', { def: workspace });
     if (workspaceAnswer) workspace = path.resolve(workspaceAnswer);
 
@@ -238,6 +263,8 @@ async function cmdInit({ flags, c, args }) {
   );
   out('');
   out(`Run ${c.accent('klaud')} to chat, or ${c.accent('klaud "fix the failing test"')} for one shot.`);
+  // The shared prompt reader would otherwise keep stdin open.
+  endPrompts();
   return 0;
 }
 
@@ -304,6 +331,24 @@ async function cmdProviders({ flags, c }) {
   out(c.dim(catalog.note || 'Rate limits are quoted from the providers and not verified by Klaud.'));
   out(c.dim(`Run ${c.accent('klaud init')} to pick one and save it.`));
   return 0;
+}
+
+/** The model ids a local server actually has, with a short timeout. */
+async function installedModels(provider) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 4000);
+  try {
+    const models = await llm.listModels({
+      baseUrl: provider.baseUrl,
+      apiKey: '',
+      signal: controller.signal,
+    });
+    return (models || []).map((entry) => entry.id).filter(Boolean);
+  } catch {
+    return [];
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function probeProviders(list, c) {

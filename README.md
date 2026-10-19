@@ -343,13 +343,16 @@ pane with the button or Esc gives the transcript its full width back.
 
 The prompt bar changes with the screen: the title screen keeps the one card
 with the chips inside it, and once there is a conversation the field stands
-alone — `+` (the skill list) at the left, the send circle at the right, both
-centred on the box, with the Chat/Cowork, permission, workspace and model chips
-in the row underneath.
+alone — `+` at the left, the send circle at the right, both centred on the box,
+with the Chat/Cowork, permission, workspace and model chips in the row
+underneath. The `+` opens a menu of what a turn can be given: **Skills** (which
+lists them, same as typing `/`), **Change workspace**, **Add a connector** and
+**Model provider** — each one opening the panel that does that job.
 
 Covered by `test/browser.js`: the card replaces that write, the pane opens with
-working Preview and Code tabs, both files land on disk, the `+` opens the skill
-list, and a reload rebuilds the artifact from the saved conversation.
+working Preview and Code tabs, both files land on disk, the `+` menu opens and
+its Skills view inserts a skill into the prompt, and a reload rebuilds the
+artifact from the saved conversation.
 
 ## Quick start
 
@@ -368,16 +371,22 @@ and the same `~/.klaud` as the web app. Not a wrapper around it — both front
 ends call the same engine in-process.
 
 ```sh
-git clone https://github.com/ahpah-dev/klaud.git
-cd klaud && npm i -g .
+npm i -g @ahpah/klaud             # download from the registry (command: klaud)
 
 klaud                            # interactive session
 klaud "fix the failing test"     # one prompt, then exit
 ```
 
-A folder install works on every npm, including npm 12, which ships with
-`allow-git` and `allow-remote` set to `none`. Where git installs are allowed,
-`npm i -g github:ahpah-dev/klaud` does the same thing in one step.
+Prefer building from source? A folder install works on every npm, including
+npm 12, which ships with `allow-git` and `allow-remote` set to `none`:
+
+```sh
+git clone https://github.com/ahpah-dev/klaud.git
+cd klaud && npm i -g .
+```
+
+Where git installs are allowed, `npm i -g github:ahpah-dev/klaud` does the
+same thing in one step.
 
 | command | what it does |
 | --- | --- |
@@ -392,10 +401,23 @@ A folder install works on every npm, including npm 12, which ships with
 | `klaud doctor` | Node, settings, workspace writability and provider reachability in one pass |
 | `klaud serve` | start the web UI from the same install |
 
-Inside a session: `/help`, `/model`, `/permissions`, `/skills`, `/sessions`,
-`/resume <id>`, `/config`, `/clear`, `/exit`. Ctrl+C cancels a running turn, and
-exits from an empty line. Typing `/code-review …` invokes a skill the same way
-the web app does.
+Inside a session: `/help`, `/model`, `/effort`, `/permissions`, `/skills`,
+`/sessions`, `/resume <id>`, `/cost`, `/config`, `/clear`, `/exit`. Tab
+completes commands and skills, a line ending in `\` continues on the next one,
+and history survives restarts (`~/.klaud/cli-history.json`). Ctrl+C cancels a
+running turn; a second one leaves. Typing `/code-review …` invokes a skill the
+same way the web app does.
+
+A turn is drawn as cards, so a long one stays skimmable:
+
+```text
+  ⏺ read_file     src/lib/skills.js
+    ⎿ 412 lines · 4ms
+  ✻ The skill loader is the only place that touches disk here, so …
+  ⏺ edit_file     src/lib/skills.js
+    ⎿ +18 −4 · 2ms
+  ✓ 4.2s · 2 tools · 12.4k tokens
+```
 
 Two rules the output follows, because they are what makes a CLI scriptable:
 
@@ -406,13 +428,14 @@ Two rules the output follows, because they are what makes a CLI scriptable:
   `130` you cancelled it.
 
 Flags: `--yes` (approve every write and command), `--permission-mode
-auto|ask|readonly`, `--model`, `--workspace`, `--quiet`, `--verbose`,
-`--no-color` (as is `NO_COLOR`). In `ask` mode a run with no terminal on stdin
-refuses to start instead of approving on your behalf — pass `--yes` or
-`--permission-mode readonly`.
+auto|ask|readonly`, `--model`, `--effort default|low|medium|high`,
+`--workspace`, `--quiet`, `--verbose`, `--no-color` (as is `NO_COLOR`). In
+`ask` mode a run with no terminal on stdin refuses to start instead of
+approving on your behalf — pass `--yes` or `--permission-mode readonly`.
 
-Covered by `node test/cli.js`: 27 checks over the surface, the exit codes, a
-full turn against a mock provider, and the interactive session.
+Covered by `node test/cli.js`: 37 checks over the surface, the exit codes, a
+full turn against a mock provider, the card rendering, and the interactive
+session's banner, slash commands and prompt continuation.
 
 ## Start free — no card, ever
 

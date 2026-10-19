@@ -35,6 +35,20 @@ main(process.argv.slice(2)).then(
     });
   },
   (err) => {
+    /* A usage mistake is not a crash: say what is wrong and point at --help,
+       without a stack trace that makes the terminal look broken. */
+    if (err && err.code === 'EUSAGE') {
+      const { makePalette } = require('../src/cli/ui');
+      const c = makePalette(process.stderr);
+      process.stderr.write(`${c.red('error')} ${err.message}\n`);
+      process.stderr.write(`Run ${c.bold('klaud --help')} to see the options.\n`);
+      process.exitCode = 2;
+      setImmediate(() => {
+        const fallback = setTimeout(() => process.exit(2), 300);
+        if (fallback.unref) fallback.unref();
+      });
+      return;
+    }
     process.stderr.write(`${err && err.stack ? err.stack : String(err)}\n`);
     process.exitCode = 1;
     setImmediate(() => {

@@ -172,6 +172,37 @@
               <svg aria-hidden="true" id="send-icon"><use href="#i-send"/></svg>
             </button>
           </div>
+          <!-- What the + opens: a menu of the real things you can add to a turn.
+               Skills expands into the list; the rest jump to the panel that
+               already does the work. -->
+          <div class="plus-menu" id="plus-menu" role="menu" aria-label="Add to your message" hidden></div>
+          <!-- The reference opens one menu from the model chip: the current model
+               with a check, then Effort with its value, then More models — and the
+               chip repeats the pair ("Sonnet 5.5 Medium"). It is a sibling of the
+               + menu, inside the field, so both are placed by the same routine and
+               drop from the exact same line. -->
+          <div class="model-menu" id="model-menu" role="menu" aria-label="Model and effort" hidden>
+            <button class="mm-item mm-model" id="mm-model" role="menuitem">
+              <span class="mm-text">
+                <span class="mm-title" id="mm-model-title">no model</span>
+                <span class="mm-sub" id="mm-model-sub"></span>
+              </span>
+              <svg class="mm-check" aria-hidden="true"><use href="#i-check"/></svg>
+            </button>
+            <div class="mm-sep"></div>
+            <button class="mm-item mm-row" id="mm-effort" role="menuitem" aria-expanded="false" aria-controls="mm-effort-list">
+              <span class="mm-label">Effort</span>
+              <span class="mm-value" id="mm-effort-value">Default</span>
+              <svg class="mm-chev" aria-hidden="true"><use href="#i-chevron"/></svg>
+            </button>
+            <div class="mm-list" id="mm-effort-list" role="group" aria-label="Reasoning effort" hidden></div>
+            <button class="mm-item mm-row" id="mm-more" role="menuitem">
+              <span class="mm-label">More models</span>
+              <svg class="mm-chev" aria-hidden="true"><use href="#i-chevron"/></svg>
+            </button>
+            <div class="mm-sep"></div>
+            <p class="mm-foot" id="mm-foot"></p>
+          </div>
         </div>
         <div class="composer-row">
           <!-- Chat and Cowork share this one composer, so the mode is a small
@@ -191,9 +222,10 @@
             <span id="composer-ws-label">…</span>
           </button>
           <div class="grow"></div>
-          <button class="chip-select model-chip" id="model-pill" title="Change model">
+          <button class="chip-select model-chip" id="model-pill" title="Model and effort" aria-haspopup="menu" aria-expanded="false">
             <span class="dot off" id="model-dot"></span>
             <span class="name" id="model-name">no model</span>
+            <span class="eff" id="model-effort">Default</span>
             <svg aria-hidden="true" class="chev"><use href="#i-chevron"/></svg>
           </button>
         </div>

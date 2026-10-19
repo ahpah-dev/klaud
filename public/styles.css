@@ -670,8 +670,10 @@ body.sidebar-hidden .sidebar-reveal {
   grid-row: 2;
 }
 
+/* The pane's width is a variable so a drag can set it; the fallback keeps the
+   stylesheet working with no JavaScript at all. */
 .main.artifact-pane-open {
-  grid-template-columns: minmax(0, 1fr) min(600px, 46vw);
+  grid-template-columns: minmax(0, 1fr) var(--pane-width, min(600px, 46vw));
 }
 
 .topbar {
@@ -2095,6 +2097,54 @@ details[open] > .tool-head .chev {
   min-height: 0;
   background: var(--surface-2);
   border-left: 1px solid var(--border);
+  /* The resize handle hangs off the left edge, so this is its anchor. */
+  position: relative;
+}
+
+/* ---- the resize handle -------------------------------------------------
+   A 10px strip straddling the pane's left border: wide enough to grab, drawn
+   as a 2px line so nothing looks heavy until it is hovered or dragged. */
+.ap-resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -5px;
+  width: 10px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: col-resize;
+  touch-action: none;
+  background: transparent;
+  border: none;
+  padding: 0;
+}
+
+.ap-resizer::after {
+  content: '';
+  width: 2px;
+  height: 46px;
+  border-radius: 2px;
+  background: var(--border-strong);
+  opacity: 0;
+  transition: opacity 0.12s var(--ease), background 0.12s var(--ease);
+}
+
+.ap-resizer:hover::after,
+.ap-resizer:focus-visible::after,
+body.pane-resizing .ap-resizer::after {
+  opacity: 1;
+  background: var(--accent);
+}
+
+.ap-resizer:focus-visible {
+  outline: none;
+}
+
+body.pane-resizing {
+  cursor: col-resize;
+  user-select: none;
 }
 
 .main.artifact-pane-open > .artifact-pane {
@@ -2225,6 +2275,11 @@ details[open] > .tool-head .chev {
     grid-template-columns: minmax(0, 1fr);
   }
 
+  /* Full-width pane: there is no second column to drag. */
+  .ap-resizer {
+    display: none;
+  }
+
   .main.artifact-pane-open > .centre-group {
     display: none;
   }
@@ -2290,17 +2345,14 @@ details[open] > .tool-head .chev {
   border-bottom-left-radius: 0;
   border-bottom-right-radius: 0;
   box-shadow: none;
-  /* No + button and no send inside on this screen: both live in the row. */
-  --prompt-pad: 14px 20px 14px;
+  /* The field holds only text on this screen — the + and the send live in the
+     row — so the text takes the old padding back. */
+  --prompt-pad: 18px 20px 6px;
 }
 
 .app.is-empty .prompt-field {
   padding: 0;
   gap: 0;
-}
-
-.app.is-empty .attach-btn {
-  display: none;
 }
 
 .app.is-empty .composer-row {
@@ -4342,6 +4394,146 @@ body {
   --prompt-line: 1.55;
 }
 
+/* The + menu: a dropdown under the field, the way a plus affordance behaves.
+   Flat, hairline, one column — every entry is a real action, so the rows carry
+   an icon, a label, and either a caret (it opens a submenu) or nothing.
+   Default is below the field; `.is-up` flips it above, which is what a
+   bottom-docked composer needs — the JS measures the room and picks. */
+.plus-menu {
+  position: absolute;
+  top: calc(100% - 4px);
+  bottom: auto;
+  left: 0;
+  z-index: 30;
+  width: min(560px, calc(100% - 24px));
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+}
+
+.plus-menu.is-up {
+  top: auto;
+  bottom: calc(100% - 4px);
+}
+
+.plus-menu[hidden] {
+  display: none;
+}
+
+/* Rows sized like the reference: ~40px, 15px labels, the trailing hint or
+   caret pushed to the right edge of a wide card. */
+.plus-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 40px;
+  padding: 10px 12px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 15px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s var(--ease);
+}
+
+.plus-item:hover,
+.plus-item:focus-visible {
+  background: var(--surface-2);
+}
+
+.plus-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  color: var(--text-2);
+}
+
+.plus-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.plus-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plus-caret {
+  display: grid;
+  place-items: center;
+  flex: none;
+  color: var(--text-3);
+}
+
+/* The shortcut hint the reference shows on its first row. */
+.plus-shortcut {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-3);
+  letter-spacing: 0.02em;
+}
+
+.plus-caret svg {
+  width: 14px;
+  height: 14px;
+}
+
+.plus-sep {
+  height: 1px;
+  margin: 6px 4px;
+  background: var(--border);
+}
+
+/* On the title screen the + leads the chip row inside the card, at the
+   reference's own position: same 32px circle the chips are sized to. */
+.composer-row .attach-btn {
+  width: 32px;
+  height: 32px;
+  margin: 0;
+}
+
+/* The skills view replaces the list in place, so it leads with a way back. */
+.plus-back .plus-icon svg {
+  transform: rotate(180deg);
+}
+
+.plus-desc {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plus-skill .plus-label {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--accent-text);
+}
+
+.plus-empty {
+  padding: 10px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-3);
+}
+
 /* The field: add · text · send, in that order, the way a prompt bar reads.
    The two round buttons are centred on the box itself — with symmetric
    padding above and below the single line, the box's centre and the text
@@ -4714,7 +4906,21 @@ body {
 
 /* The model chip sits last on the right, mirroring the reference. */
 .model-chip .name {
-  max-width: 190px;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+  color: var(--text-2);
+}
+
+/* The chip repeats what the menu says, the way the reference shows
+   "Sonnet 5.5 Medium" — model, then the effort it will run at. The effort
+   never shrinks: a half-squeezed "H" would be a worse label than a shorter
+   model name, which has an ellipsis to carry it. */
+.model-chip .eff {
+  flex: none;
+  max-width: 90px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -4725,6 +4931,146 @@ body {
 .model-chip .chev {
   width: 13px;
   height: 13px;
+  color: var(--text-3);
+}
+
+/* --- the model menu: the reference opens it from the model chip ---------- */
+/* A sibling of the + menu inside the field, so `placeDropdown` positions both
+   against the same box and they open from the exact same line. The vertical
+   `top`/`bottom` is set inline on every open — never here. */
+.model-menu {
+  position: absolute;
+  right: 8px;
+  z-index: 45;
+  width: min(420px, calc(100vw - 40px));
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+  animation: rise 0.14s var(--ease) both;
+}
+
+.model-menu[hidden] {
+  display: none;
+}
+
+.mm-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 14.5px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s var(--ease);
+}
+
+.mm-item:hover {
+  background: var(--surface-2);
+}
+
+/* The current model: name over its full id, checkmark on the right — the
+   block the reference shows at the top of the menu. */
+.mm-model {
+  align-items: flex-start;
+}
+
+.mm-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.mm-title {
+  font-weight: 600;
+  font-size: 15px;
+}
+
+.mm-sub {
+  font-size: 12px;
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mm-check {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  margin-top: 3px;
+  color: var(--accent);
+}
+
+/* Effort and More models: label left, value then chevron right — the row the
+   reference places second in the menu. */
+.mm-row .mm-label {
+  flex: 1;
+}
+
+.mm-value {
+  font-size: 13px;
+  color: var(--text-3);
+}
+
+.mm-chev {
+  width: 13px;
+  height: 13px;
+  flex: none;
+  color: var(--text-3);
+  transition: transform 0.15s var(--ease);
+}
+
+.mm-row[aria-expanded="true"] .mm-chev {
+  transform: rotate(90deg);
+}
+
+/* The effort options open in place, indented under the Effort row. */
+.mm-list {
+  padding: 2px 0 4px 14px;
+}
+
+.mm-list[hidden] {
+  display: none;
+}
+
+.mm-list .mm-item {
+  min-height: 34px;
+  padding: 6px 10px;
+  font-size: 14px;
+}
+
+.mm-list .mm-item .mm-check {
+  width: 14px;
+  height: 14px;
+  margin-top: 0;
+  margin-left: auto;
+}
+
+.mm-list .mm-opt {
+  justify-content: space-between;
+}
+
+.mm-sep {
+  height: 1px;
+  margin: 6px 6px;
+  background: var(--border);
+}
+
+.mm-foot {
+  margin: 6px 10px 8px;
+  font-size: 11.5px;
+  line-height: 1.45;
   color: var(--text-3);
 }
 
@@ -4758,6 +5104,10 @@ body {
 
   .model-chip .name {
     max-width: 110px;
+  }
+
+  .model-chip .eff {
+    max-width: 64px;
   }
 }
 

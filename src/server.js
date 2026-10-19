@@ -25,6 +25,16 @@ const {
   load: loadExtension,
 } = require('./extensions');
 
+/** A model served from this machine needs no API key (Ollama, LM Studio, vLLM). */
+function isLoopbackBaseUrl(baseUrl) {
+  try {
+    const host = new URL(String(baseUrl || '')).hostname.toLowerCase();
+    return host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '0.0.0.0';
+  } catch {
+    return false;
+  }
+}
+
 /** Where each extension kind is read from, for the settings panel to display. */
 function skillsDirFor(cwd) {
   const m = loadExtension('skills');
@@ -830,7 +840,10 @@ async function handleApi(req, res, url, pathname, { token, activeTurns }) {
     const body = await readBody(req);
     const settings = await store.loadSettings();
 
-    if (!settings.apiKey && !body.allowNoKey) {
+    /* A model on this machine needs no key — the CLI has always allowed that,
+       and Ollama/LM Studio users hit this wall the moment they tried to chat. */
+    const keylessLocal = isLoopbackBaseUrl(settings.baseUrl);
+    if (!settings.apiKey && !keylessLocal && !body.allowNoKey) {
       return sendError(res, 400, 'No API key configured. Open Settings and add your OpenAI-compatible key.'), true;
     }
 

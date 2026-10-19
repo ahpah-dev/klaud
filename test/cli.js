@@ -58,6 +58,7 @@ function runCli(args, { env = {}, input = null } = {}) {
 
 /** A minimal OpenAI-compatible endpoint: tool call, tool call, answer. */
 function mockProvider() {
+  const seen = { lastUser: '' };
   return new Promise((resolve) => {
     const server = http.createServer(async (req, res) => {
       const chunks = [];
@@ -71,6 +72,8 @@ function mockProvider() {
       }
 
       const body = JSON.parse(raw || '{}');
+      const users = (body.messages || []).filter((m) => m.role === 'user');
+      if (users.length) seen.lastUser = String(users[users.length - 1].content || '');
       const toolResults = (body.messages || []).filter((m) => m.role === 'tool');
       res.writeHead(200, { 'content-type': 'text/event-stream' });
       const w = (o) => res.write(`data: ${JSON.stringify(o)}\n\n`);
@@ -99,7 +102,7 @@ function mockProvider() {
       res.write('data: [DONE]\n\n');
       res.end();
     });
-    server.listen(0, '127.0.0.1', () => resolve({ server, port: server.address().port }));
+    server.listen(0, '127.0.0.1', () => resolve({ server, port: server.address().port, seen }));
   });
 }
 
@@ -199,6 +202,13 @@ function mockProvider() {
       JSON.stringify(run.stdout));
     check('progress went to stderr instead',
       /step 1\/|list_dir/.test(run.stderr));
+    check('the tool call renders as a card with its outcome on the line below',
+      /⏺ list_dir/.test(run.stderr) && /⎿/.test(run.stderr),
+      run.stderr.slice(0, 400));
+    check('the turn ends with a timing/tools/tokens summary',
+      /✓.*tools?.*tokens.*session/.test(run.stderr), run.stderr.slice(-300));
+    check('none of the CLI glyphs leak into stdout',
+      !/[⏺⎿]/.test(run.stdout), JSON.stringify(run.stdout.slice(0, 200)));
     const written = await fs.readFile(path.join(workspace, 'cli-was-here.txt'), 'utf8').catch(() => null);
     check('the tool actually wrote the file', written === 'written by the cli test\n');
 
@@ -245,6 +255,36 @@ function mockProvider() {
     check('the interactive session starts and leaves cleanly',
       session.code === 0 && /Commands/.test(session.stderr),
       `code=${session.code} stderr=${session.stderr.slice(0, 300)}`);
+    check('the session opens with the framed banner',
+      /╭─ Klaud \d+\.\d+\.\d+/.test(session.stderr) && /\/help commands/.test(session.stderr),
+      session.stderr.slice(0, 300));
+
+    /* Slash commands the session owns: effort is persisted, cost reports usage. */
+    const slash = await runCli([], { env, input: '/effort high\n/effort\n/cost\n/exit\n' });
+    check('the session sets reasoning effort and shows it back',
+      slash.code === 0 && /effort = high/.test(slash.stderr) && /high/.test(slash.stderr),
+      `code=${slash.code} stderr=${slash.stderr.slice(-300)}`);
+    check('cost reports an empty session honestly',
+      /no tokens used yet/.test(slash.stderr), slash.stderr.slice(-200));
+    const storedEffort = JSON.parse(await fs.readFile(path.join(dataDir, 'settings.json'), 'utf8'));
+    check('/effort wrote the setting to disk', storedEffort.reasoningEffort === 'high',
+      String(storedEffort.reasoningEffort));
+
+    /* An invalid level is a usage error, not a silent no-op. */
+    const badEffort = await runCli(['run', '--effort', 'banana', 'hello'], { env });
+    check('an unknown effort level is refused, exit 2',
+      badEffort.code === 2 && /effort must be default, low, medium or high/.test(badEffort.stderr),
+      `code=${badEffort.code} stderr=${badEffort.stderr.slice(0, 300)}`);
+
+    /* Piped sessions: a trailing backslash continues the prompt, and EOF at the
+       end of the script must not abort the turn that is still answering. */
+    const piped = await runCli([], { env, input: 'first half \\\nsecond half\n/exit\n' });
+    check('a trailing backslash joins the prompt onto one turn',
+      /first half \nsecond half/.test(mock.seen.lastUser),
+      JSON.stringify(mock.seen.lastUser));
+    check('a piped session finishes its turn at EOF instead of cancelling it',
+      piped.code === 0 && /✓/.test(piped.stderr) && !/cancelled/.test(piped.stderr),
+      `code=${piped.code} stderr=${piped.stderr.slice(-300)}`);
 
     /* A closed pipe (| head) is not a crash. */
     const pipe = await new Promise((resolve) => {

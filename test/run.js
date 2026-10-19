@@ -200,6 +200,34 @@ function startMockProvider() {
       return;
     }
 
+    if (state.scenario === 'object_tool_args') {
+      // Ollama's older OpenAI shim sends a decoded object, not a JSON string.
+      write({
+        choices: [
+          {
+            index: 0,
+            delta: {
+              tool_calls: [
+                {
+                  index: 0,
+                  id: 'c1',
+                  type: 'function',
+                  function: {
+                    name: 'write_file',
+                    arguments: { path: 'src/from-object.txt', content: 'x\n' },
+                  },
+                },
+              ],
+            },
+          },
+        ],
+      });
+      write({ choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] });
+      res.write('data: [DONE]\n\n');
+      res.end();
+      return;
+    }
+
     if (state.scenario === 'loop_tools') {
       // Always asks for another tool, so only the step cap can end the turn.
       write({ model: 'mock-large', choices: [{ index: 0, delta: { content: 'Checking again.' } }] });
@@ -729,6 +757,19 @@ async function main() {
         assert.equal(defaults.reasoningEffort, '');
       });
 
+      /* Windows editors and `Set-Content -Encoding utf8` prefix a BOM. JSON.parse
+         rejects it, and the old behaviour was to fall back to defaults — every
+         setting silently reverting to stock is a nasty way to lose a key. */
+      await it('reads a settings file that starts with a byte-order mark', async () => {
+        const file = path.join(settingsDataDir, 'settings.json');
+        const saved = { baseUrl: 'http://localhost:11434/v1', model: 'bom-model', apiKey: 'bom-key' };
+        await fs.writeFile(file, `\uFEFF${JSON.stringify(saved, null, 2)}`, 'utf8');
+        const loaded = await loadSettings();
+        assert.equal(loaded.model, 'bom-model');
+        assert.equal(loaded.apiKey, 'bom-key');
+        assert.equal(loaded.baseUrl, 'http://localhost:11434/v1');
+      });
+
       await it('rejects junk rather than guessing an effort', async () => {
         const saved = await saveSettings({ reasoningEffort: 'banana' });
         assert.equal(saved.reasoningEffort, '', 'junk must not become a level Klaud will send');
@@ -1240,6 +1281,45 @@ async function main() {
       });
       assert.equal(result.toolCalls.length, 1);
       assert.deepEqual(JSON.parse(result.toolCalls[0].function.arguments), { path: 'src' });
+    });
+
+    /* Ollama's older OpenAI shim sends the arguments as an object rather than a
+       JSON string. Concatenating that used to produce "[object Object]" and drop
+       the call entirely. */
+    await it('accepts tool arguments sent as an object instead of a string', async () => {
+      provider.scenario = 'object_tool_args';
+      const result = await streamChat({
+        baseUrl: provider.baseUrl,
+        apiKey: 'k',
+        model: 'mock-large',
+        messages: [{ role: 'user', content: 'write' }],
+      });
+      assert.equal(result.toolCalls.length, 1);
+      assert.deepEqual(JSON.parse(result.toolCalls[0].function.arguments), {
+        path: 'src/from-object.txt',
+        content: 'x\n',
+      });
+    });
+
+    /* Ollama's chat templates raise "System message must be at the beginning" if
+       a system message follows user/tool turns — which is exactly what Klaud's
+       wrap-up and loop-breaker nudges do. On the wire those become user
+       messages; the stored transcript is untouched. */
+    await it('sends mid-conversation system nudges as user messages', async () => {
+      provider.scenario = 'text';
+      const messages = [
+        { role: 'system', content: 'You are Klaud.' },
+        { role: 'user', content: 'list the files' },
+        { role: 'assistant', content: '', tool_calls: [{ id: 'c1', type: 'function', function: { name: 'list_dir', arguments: '{}' } }] },
+        { role: 'tool', tool_call_id: 'c1', content: 'a.txt' },
+        { role: 'system', content: 'Wrap up now.' },
+      ];
+      await streamChat({ baseUrl: provider.baseUrl, apiKey: 'k', model: 'mock-large', messages });
+      const sent = provider.requests[provider.requests.length - 1].messages;
+      assert.equal(sent[0].role, 'system', 'the opening system prompt stays a system message');
+      assert.equal(sent[4].role, 'user', 'a trailing system nudge is downgraded for the wire');
+      assert.equal(sent[4].content, 'Wrap up now.');
+      assert.equal(messages[4].role, 'system', 'the caller’s array is not mutated');
     });
 
     await it('streams reasoning content separately', async () => {
@@ -1891,6 +1971,98 @@ async function main() {
           assert.ok(entry.parameters.properties[key], `${entry.name}: required "${key}" has no property`);
         }
       }
+    });
+  });
+
+  /* The CLI's own renderer: the terminal is the other half of the coding loop,
+     and the diff under a tool card is the thing a person actually reads. */
+  await describe('cli rendering', async () => {
+    const renderEvents = (events, { live = false } = {}) => {
+      const { createRenderer } = require('../src/cli/render');
+      const { makePalette } = require('../src/cli/ui');
+      let err = '';
+      let out = '';
+      const errStream = { write: (s) => { err += String(s); }, isTTY: false, columns: 80 };
+      const outStream = { write: (s) => { out += String(s); }, isTTY: false };
+      const renderer = createRenderer({ out: outStream, err: errStream, c: makePalette(null), live });
+      for (const event of events) renderer.handle(event);
+      return { err, out };
+    };
+
+    await it('draws an edit as a diff under the tool card', () => {
+      const { err } = renderEvents([
+        { type: 'tool_call', name: 'edit_file', args: { path: 'src/a.js', old_string: 'one\ntwo\nthree', new_string: 'one\nTWO\nthree' } },
+        { type: 'tool_result', name: 'edit_file', ok: true, output: 'changed', durationMs: 4 },
+      ]);
+      assert.match(err, /⏺ edit_file/);
+      assert.match(err, /⎿ \+1 −1/);
+      assert.match(err, /- two/);
+      assert.match(err, /\+ TWO/);
+    });
+
+    await it('shows a new file as additions', () => {
+      const { err } = renderEvents([
+        { type: 'tool_call', name: 'write_file', args: { path: 'src/new.js', content: 'first\nsecond\n' } },
+        { type: 'tool_result', name: 'write_file', ok: true, output: 'wrote', durationMs: 2 },
+      ]);
+      assert.match(err, /\+2 −0/);
+      assert.match(err, /\+ first/);
+      assert.match(err, /\+ second/);
+    });
+
+    await it('keeps tool cards and diffs on stderr, never on stdout', () => {
+      const { err, out } = renderEvents([
+        { type: 'tool_call', name: 'edit_file', args: { path: 'a.js', old_string: 'x', new_string: 'y' } },
+        { type: 'tool_result', name: 'edit_file', ok: true, output: 'ok', durationMs: 1 },
+        { type: 'text', value: 'The answer.' },
+      ]);
+      assert.match(err, /⏺ edit_file/);
+      assert.equal(out, 'The answer.', 'stdout carries the answer and nothing else');
+    });
+
+    /* The prompt layer used to lose every answer: it resolved after closing the
+       readline (whose 'close' won the race), and a fresh interface per question
+       discarded lines the previous one had buffered. */
+    await it('accepts several piped answers, in order', async () => {
+      const { PassThrough } = require('stream');
+      const { ask, endPrompts } = require('../src/cli/ui');
+      const input = new PassThrough();
+      const output = new PassThrough();
+      const first = ask('A', { input, output, def: 'x' });
+      const second = ask('B', { input, output, def: 'y' });
+      input.end('one\ntwo\n');
+      assert.equal(await first, 'one');
+      assert.equal(await second, 'two');
+      endPrompts(input);
+    });
+
+    await it('falls back to the default when the input has already ended', async () => {
+      const { PassThrough } = require('stream');
+      const { ask } = require('../src/cli/ui');
+      const input = new PassThrough();
+      input.end('');
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      assert.equal(await ask('C', { input, output: new PassThrough(), def: 'fallback' }), 'fallback');
+    });
+
+    await it('reads a secret from piped input too', async () => {
+      const { PassThrough } = require('stream');
+      const { secret, endPrompts } = require('../src/cli/ui');
+      const input = new PassThrough();
+      const output = new PassThrough();
+      const pending = secret('Key: ', { input, output });
+      input.end('sk-test-123\n');
+      assert.equal(await pending, 'sk-test-123');
+      endPrompts(input);
+    });
+
+    await it('does not print a diff for a failed change', () => {
+      const { err } = renderEvents([
+        { type: 'tool_call', name: 'edit_file', args: { path: 'a.js', old_string: 'x', new_string: 'y' } },
+        { type: 'tool_result', name: 'edit_file', ok: false, output: 'old_string not found', durationMs: 1 },
+      ]);
+      assert.match(err, /failed/);
+      assert.doesNotMatch(err, /\+ y/);
     });
   });
 

@@ -113,14 +113,15 @@ async function peekBody(res) {
 /** Turn an HTTP error response into a message a human can act on. */
 async function describeHttpError(res, context = {}) {
   const raw = await res.text().catch(() => '');
-  let detail = raw.slice(0, 1_200);
+  const status = res.status;
+  const url = context.url || res.url || '';
+  let detail = String(raw || '').slice(0, 1_200);
   try {
     const parsed = JSON.parse(raw);
     detail = parsed?.error?.message || parsed?.message || parsed?.error || detail;
     if (typeof detail !== 'string') detail = JSON.stringify(detail);
   } catch { /* keep raw */ }
 
-  const url = context.url || res.url || '';
   const isCloudflare = /cloudflare\.com/i.test(url);
   const cfCode = (() => {
     try {
@@ -167,27 +168,27 @@ async function describeHttpError(res, context = {}) {
         ' Cloudflare did not recognise that URL. This usually means the account segment is wrong, or that ' +
         'angle brackets were left in the URL from an example — those are placeholders, not part of a URL, ' +
         'and Windows treats them as redirections.';
-    } else if (res.status === 401 || res.status === 403 || cfCode === 10000) {
+    } else if (status === 401 || status === 403 || cfCode === 10000) {
       hint =
         ' Cloudflare rejected the request, but this does not necessarily mean your key is wrong. ' +
         'Workers AI returns "Authentication error" when the account ID in the URL belongs to a ' +
         'different account than the token, or when the token lacks the Workers AI permission. ' +
         'Run `npm run check-cloudflare` to see which of the two it is — it reads your current settings.';
-    } else if (res.status === 404) {
+    } else if (status === 404) {
       hint =
         ' Cloudflare could not route that URL. The Workers AI base URL must end in /ai/v1, with your ' +
         'own 32-character account ID in place of the account segment. Click Free, then Cloudflare, then ' +
         'Set up automatically to have it built for you.';
-    } else if (res.status === 429) {
+    } else if (status === 429) {
       hint = ' Cloudflare is rate limiting. The free allowance is 10,000 Neurons per day, resetting at 00:00 UTC.';
     }
   } else if (/127\.0\.0\.1:20128|localhost:20128/i.test(url)) {
-    if (res.status === 401) {
+    if (status === 401) {
       hint = ' OmniRoute requires an API key. Open http://localhost:20128 in a browser, then Dashboard → Endpoints, copy your key, and paste it in Settings.';
-    } else if (res.status === 402) {
+    } else if (status === 402) {
       hint = ' The upstream provider for this model ran out of quota or credits. Switch to auto/best-free or another free model in Settings.';
     }
-  } else if (res.status >= 500) {
+  } else if (status >= 500) {
     // NVIDIA's shared endpoint answers 500 {"message":"Failed to generate
     // completions"} for a minimal request as readily as a complex one, which
     // means the fault is theirs. Confirmed by probing: every variant fails at
@@ -204,10 +205,10 @@ async function describeHttpError(res, context = {}) {
       404: 'Endpoint not found. Most providers need the base URL to end in /v1.',
       429: 'Rate limited or out of quota. Wait a moment, or pick a different model.',
     };
-    hint = hints[res.status] ? ` ${hints[res.status]}` : '';
+    hint = hints[status] ? ` ${hints[status]}` : '';
   }
 
-  const parts = [`HTTP ${res.status} from provider.`];
+  const parts = [`HTTP ${status} from provider.`];
   if (hint) parts.push(hint.trim());
   if (cfCode !== null) parts.push(`(Cloudflare code ${cfCode})`);
   if (detail && detail.trim()) parts.push(`\n\n${detail.trim()}`);
@@ -219,6 +220,44 @@ async function describeHttpError(res, context = {}) {
 /* ------------------------------------------------------------------ *
  * Streaming tool-call assembly
  * ------------------------------------------------------------------ */
+
+/**
+ * Normalise the role layout before a request goes out.
+ *
+ * Klaud nudges the model mid-conversation with system messages — the wrap-up
+ * when the step budget runs out, the "you ended without an answer" prompt, the
+ * loop-breaker. Ollama's chat templates raise on exactly that shape
+ * ("System message must be at the beginning") and fail the whole request, which
+ * is what made a local model appear unable to call tools: the first tool call
+ * worked, then the corrective nudge blew up the next request.
+ *
+ * Every OpenAI-compatible endpoint accepts a user message anywhere, so later
+ * system messages are downgraded to user on the wire. The stored transcript is
+ * untouched — only what the provider receives changes.
+ */
+function normalizeWireMessages(messages) {
+  return (messages || []).map((message, index) => {
+    if (index > 0 && message && message.role === 'system') {
+      const { role, ...rest } = message;
+      return { ...rest, role: 'user' };
+    }
+    return message;
+  });
+}
+
+/** Tool arguments arrive as a string from most providers and as an object from some (Ollama's older OpenAI shim). Both are valid here. */
+function argumentsToString(value) {
+  if (value === undefined || value === null) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'object') {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return '';
+    }
+  }
+  return String(value);
+}
 
 function createAccumulator() {
   const calls = new Map();
@@ -244,7 +283,7 @@ function createAccumulator() {
       if (delta.id) entry.id = delta.id;
       const fn = delta.function || {};
       if (fn.name) entry.name = fn.name;
-      if (fn.arguments) entry.args += fn.arguments;
+      if (fn.arguments) entry.args += argumentsToString(fn.arguments);
     },
     list() {
       return [...calls.values()]
@@ -403,7 +442,9 @@ async function streamChat({
   const url = chatCompletionsUrl(baseUrl);
   const body = {
     model,
-    messages,
+    // Roles normalised for chat templates that reject a mid-conversation
+    // system message — see normalizeWireMessages. Only the wire is touched.
+    messages: normalizeWireMessages(messages),
     stream: true,
     temperature,
     // Only present when the provider is known to accept it. See
@@ -509,7 +550,7 @@ function fromNonStreaming(payload, onEvent) {
     .map((c, i) => ({
       id: c.id || `call_${i}`,
       type: 'function',
-      function: { name: c.function.name, arguments: c.function.arguments || '{}' },
+      function: { name: c.function.name, arguments: argumentsToString(c.function.arguments) || '{}' },
     }));
 
   return {

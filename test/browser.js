@@ -460,17 +460,18 @@ class Browser {
       `width=${layout.composerWidth} radius=${layout.composerRadius}`);
 
     /* ---- the title screen keeps the original prompt bar ----
-       Two bars exist by design: this screen is the old single card (chips and
-       send inside it, no +), and a conversation gets the field-style bar. The
-       seam is asserted as well — the field's bottom border is removed so the
-       row's box reads as one card rather than two stacked ones. */
+       Two bars exist by design: this screen is the old card (chips and send
+       inside it) with the + added, and a conversation gets the field-style bar.
+       The seam is asserted as well — the field's bottom border is removed so
+       the row's box reads as one card rather than two stacked ones. */
     const titleBar = await browser.evaluate(`
       const cs = (sel, prop) => {
         const n = document.querySelector(sel);
         return n ? getComputedStyle(n)[prop] : null;
       };
       return {
-        attach: cs('.attach-btn', 'display'),
+        attachInRow: Boolean(document.querySelector('.composer-row .attach-btn')),
+        attachInField: Boolean(document.querySelector('.prompt-field .attach-btn')),
         sendInRow: Boolean(document.querySelector('.composer-row #send')),
         sendInField: Boolean(document.querySelector('.prompt-field #send')),
         fieldBottom: cs('.composer', 'borderBottomWidth'),
@@ -478,12 +479,42 @@ class Browser {
         rowRadius: cs('.composer-row', 'borderBottomLeftRadius')
       };
     `);
-    check('the title screen keeps the old prompt bar: chips inside the card, no +',
-      titleBar.attach === 'none' && titleBar.sendInRow && !titleBar.sendInField &&
+    check('the title screen keeps the old prompt bar: chips inside the card, + leading the row',
+      titleBar.attachInRow && !titleBar.attachInField && titleBar.sendInRow && !titleBar.sendInField &&
         titleBar.fieldBottom === '0px' && titleBar.rowBg !== 'rgba(0, 0, 0, 0)',
       JSON.stringify(titleBar));
     check('...and the card is joined, not two stacked boxes',
       parseFloat(String(titleBar.rowRadius)) >= 16, JSON.stringify(titleBar));
+
+    /* ...and the menu it opens has to fit on screen here, dropping below the
+       card the way the reference shows it. */
+    await browser.evaluate(`document.getElementById('attach-btn').click(); return true;`);
+    await sleep(500);
+    const titleMenu = await browser.evaluate(`
+      const menu = document.getElementById('plus-menu');
+      const r = menu ? menu.getBoundingClientRect() : null;
+      const card = document.querySelector('.composer').getBoundingClientRect();
+      return {
+        open: Boolean(menu && !menu.hidden),
+        top: r ? Math.round(r.top) : -1,
+        bottom: r ? Math.round(r.bottom) : -1,
+        left: r ? Math.round(r.left) : -1,
+        cardLeft: Math.round(card.left),
+        cardBottom: Math.round(card.bottom),
+        fits: Boolean(r) && r.top >= 0 && r.bottom <= window.innerHeight,
+        below: Boolean(r) && r.top >= card.bottom - 8,
+        aligned: Boolean(r) && Math.abs(r.left - card.left) <= 2
+      };
+    `);
+    check('the + menu drops below the card, aligned to its left edge, fully on screen',
+      titleMenu.open && titleMenu.fits && titleMenu.below && titleMenu.aligned,
+      JSON.stringify(titleMenu));
+    await browser.evaluate(`
+      document.getElementById('plus-menu').dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      return true;
+    `);
+    await sleep(300);
     check('the sidebar leads with New chat', layout.newChatFirst === true, String(layout.newChatFirst));
     check('the sidebar list is labelled like the reference',
       /chats and tasks/i.test(layout.sidebarLabel), layout.sidebarLabel);
@@ -1040,19 +1071,58 @@ class Browser {
         Math.abs(chatBar.send.centre - chatBar.fieldMid) <= 1.5,
       JSON.stringify(chatBar));
 
-    /* ---- the + is a working control, not a decoration ---- */
+    /* ---- the + opens its menu, and the menu goes somewhere ---- */
     await browser.evaluate(`document.getElementById('attach-btn').click(); return true;`);
-    await sleep(700);
+    await sleep(500);
     const plusMenu = await browser.evaluate(`
-      const menu = document.getElementById('skill-menu');
+      const menu = document.getElementById('plus-menu');
+      const r = menu.getBoundingClientRect();
       return {
         open: Boolean(menu && !menu.hidden),
-        items: menu.querySelectorAll('.skill-item').length,
-        prompt: document.getElementById('prompt').value
+        labels: Array.from(menu.querySelectorAll('.plus-label')).map((n) => n.textContent.trim()),
+        shortcutOnFiles: Boolean(menu.querySelector('[data-plus="files"] .plus-shortcut')),
+        shortcutText: menu.querySelector('[data-plus="files"] .plus-shortcut')?.textContent.trim() || '',
+        caretOnSkills: Boolean(menu.querySelector('[data-plus="skills"] .plus-caret')),
+        seps: menu.querySelectorAll('.plus-sep').length,
+        promptUntouched: document.getElementById('prompt').value === '',
+        // The composer is docked at the bottom here, so the menu has to open
+        // upward to be readable at all.
+        fits: r.top >= 0 && r.bottom <= window.innerHeight,
+        up: menu.classList.contains('is-up')
       };
     `);
-    check('the + opens the skill list', plusMenu.open && plusMenu.items > 0 && plusMenu.prompt === '/',
+    check('the + opens its menu instead of typing a slash for you',
+      plusMenu.open && plusMenu.labels.length === 5 && plusMenu.caretOnSkills &&
+        plusMenu.shortcutOnFiles && plusMenu.shortcutText === 'Ctrl+U' && plusMenu.seps === 1 &&
+        plusMenu.promptUntouched,
       JSON.stringify(plusMenu));
+    check('in a conversation the menu opens upward, fully on screen',
+      plusMenu.fits && plusMenu.up, JSON.stringify(plusMenu));
+
+    // Skills drills into the same list the slash menu paints.
+    await browser.evaluate(`document.querySelector('#plus-menu [data-plus="skills"]').click(); return true;`);
+    await sleep(700);
+    const skillView = await browser.evaluate(`
+      const menu = document.getElementById('plus-menu');
+      return {
+        back: Boolean(menu.querySelector('.plus-back')),
+        skills: menu.querySelectorAll('.plus-skill').length
+      };
+    `);
+    check('Skills opens the skill list inside the menu', skillView.back && skillView.skills > 0,
+      JSON.stringify(skillView));
+
+    await browser.evaluate(`document.querySelector('#plus-menu .plus-skill').click(); return true;`);
+    await sleep(400);
+    const skillPicked = await browser.evaluate(`
+      const menu = document.getElementById('plus-menu');
+      return { closed: menu.hidden, prompt: document.getElementById('prompt').value };
+    `);
+    check('choosing a skill inserts it into the prompt and closes the menu',
+      skillPicked.closed && skillPicked.prompt.startsWith('/') && skillPicked.prompt.endsWith(' '),
+      JSON.stringify(skillPicked));
+
+    // Leave the composer empty for the checks that follow.
     await browser.evaluate(`
       const p = document.getElementById('prompt');
       p.value = '';
@@ -1089,6 +1159,67 @@ class Browser {
     `);
     check('the Code tab shows the source', codeTab.code && /<!doctype html>/i.test(codeTab.text),
       JSON.stringify(codeTab));
+
+    /* ---------- the pane resizes by dragging its left edge ---------- */
+    const resizer = await browser.evaluate(`
+      const handle = document.querySelector('.ap-resizer');
+      const pane = document.getElementById('artifact-pane');
+      const rect = handle ? handle.getBoundingClientRect() : null;
+      return {
+        present: Boolean(handle),
+        role: handle ? handle.getAttribute('role') : null,
+        orientation: handle ? handle.getAttribute('aria-orientation') : null,
+        value: handle ? Number(handle.getAttribute('aria-valuenow')) : null,
+        x: rect ? Math.round(rect.left + rect.width / 2) : 0,
+        y: rect ? Math.round(rect.top + rect.height / 2) : 0,
+        width: Math.round(pane.getBoundingClientRect().width)
+      };
+    `);
+    check('the pane carries an accessible resize handle',
+      resizer.present && resizer.role === 'separator' && resizer.orientation === 'vertical' &&
+        resizer.value > 0 && resizer.width >= 320,
+      JSON.stringify(resizer));
+
+    // A real drag: press on the handle, pull 160px to the left, release.
+    const drag = [
+      { type: 'mousePressed', x: resizer.x, y: resizer.y, button: 'left', buttons: 1, clickCount: 1 },
+      { type: 'mouseMoved', x: resizer.x - 80, y: resizer.y, button: 'left', buttons: 1 },
+      { type: 'mouseMoved', x: resizer.x - 160, y: resizer.y, button: 'left', buttons: 1 },
+      { type: 'mouseReleased', x: resizer.x - 160, y: resizer.y, button: 'left', buttons: 0, clickCount: 1 },
+    ];
+    for (const step of drag) await browser.send('Input.dispatchMouseEvent', step);
+    await sleep(250);
+    const afterDrag = await browser.evaluate(`
+      const pane = document.getElementById('artifact-pane');
+      const handle = document.querySelector('.ap-resizer');
+      return {
+        width: Math.round(pane.getBoundingClientRect().width),
+        aria: Number(handle.getAttribute('aria-valuenow')),
+        stored: Number(localStorage.getItem('klaud.artifactWidth')),
+        custom: getComputedStyle(document.querySelector('.main')).getPropertyValue('--pane-width').trim()
+      };
+    `);
+    check('dragging the handle widens the pane, updates ARIA, and remembers the width',
+      afterDrag.width > resizer.width + 100 &&
+        Math.abs(afterDrag.width - afterDrag.aria) <= 2 &&
+        afterDrag.stored > 0 && /px$/.test(afterDrag.custom),
+      JSON.stringify({ before: resizer.width, after: afterDrag }));
+
+    const keyboardResize = await browser.evaluate(`
+      const handle = document.querySelector('.ap-resizer');
+      handle.focus();
+      handle.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+      return new Promise((resolve) => setTimeout(() => {
+        const pane = document.getElementById('artifact-pane');
+        resolve({
+          width: Math.round(pane.getBoundingClientRect().width),
+          aria: Number(handle.getAttribute('aria-valuenow'))
+        });
+      }, 150));
+    `);
+    check('the arrow keys resize the pane from the keyboard',
+      keyboardResize.width < afterDrag.width && Math.abs(keyboardResize.width - keyboardResize.aria) <= 2,
+      JSON.stringify({ dragged: afterDrag.width, keyboard: keyboardResize }));
 
     await browser.evaluate(`document.querySelector('.ap-close')?.click(); return true;`);
     await sleep(300);
@@ -1414,7 +1545,7 @@ class Browser {
         names: cards.map((c) => c.querySelector('.pname')?.textContent.trim().split('\\n')[0]),
         firstName: cards[0]?.querySelector('.pname')?.textContent.trim() || '',
         firstModel: cards[0]?.querySelector('[data-model-input], [data-model-select]')?.value || '',
-        caveatOnFirst: !!cards[0]?.querySelector('.pcaveat'),
+        caveatOnFirst: cards.filter((c) => c.querySelector('.pcaveat')).length,
         best: cards.filter((c) => c.classList.contains('best')).length,
         recommended: cards.filter((c) => c.querySelector('.precommended')).length,
         removedCount: document.querySelectorAll('.fp-removed-item').length,
@@ -1453,12 +1584,21 @@ class Browser {
     check('every card states a concrete free allowance',
       picker.headlines.every((h) => h.length > 10), JSON.stringify(picker.headlines));
 
-    // The point of this banner: state what was actually verified, and say
-    // plainly that the rate-limit numbers were not.
+    // The point of this banner: state what was actually verified. The long
+    // "figures are not verified" warning paragraphs were pulled out of the UI
+    // as clutter — the disclosure lives in the catalogue payload, and each card
+    // still carries its own published/not-tested label (checked below).
     check('the picker reports what was actually checked this run',
       /checked on this run/i.test(picker.banner), picker.banner.slice(0, 120));
-    check('the picker admits the rate-limit figures are not verified',
-      /not\s*<\/?strong>?\s*verified|not verified/i.test(picker.banner), picker.banner.slice(0, 260));
+    check('no provider card carries a warning box any more',
+      picker.caveatOnFirst === 0, `warning boxes=${picker.caveatOnFirst}`);
+    const catalogNote = await (async () => {
+      const res = await fetch(`${appUrl}/api/providers/free`, { headers: { 'x-klaud-token': token } });
+      const data = await res.json();
+      return String(data.note || '');
+    })();
+    check('the catalogue still carries the not-verified disclosure, out of the way',
+      /not verified/i.test(catalogNote), catalogNote.slice(0, 160));
     check('providers whose numbers are unpublished are labelled as such',
       picker.basisChips.some((c) => /not published/i.test(c)) &&
         picker.basisChips.some((c) => /documented|no quota/i.test(c)),
@@ -1916,6 +2056,8 @@ class Browser {
 
     /* ---- keyboard: Tab reaches it, Enter and Space activate ---- */
     await browser.evaluate(`document.getElementById('prompt').focus(); return true;`);
+    // One Tab lands on the + (which leads the row now), the second on Chat.
+    await browser.key('Tab', 'Tab', 9);
     await browser.key('Tab', 'Tab', 9);
     await sleep(250);
     const tabbed = await browser.evaluate(`
@@ -1964,8 +2106,9 @@ class Browser {
     check('switching back to Chat restores the original starters',
       afterEnter.chatStarters === 4 && afterEnter.starters === 0, JSON.stringify(afterEnter));
 
-    // Two Tabs from the prompt: the second segment, then Space.
+    // Three Tabs from the prompt: past the +, past Chat, onto Cowork — then Space.
     await browser.evaluate(`document.getElementById('prompt').focus(); return true;`);
+    await browser.key('Tab', 'Tab', 9);
     await browser.key('Tab', 'Tab', 9);
     await browser.key('Tab', 'Tab', 9);
     await sleep(250);
@@ -2282,12 +2425,153 @@ class Browser {
     check('a screenshot of the new prompt affordances was taken',
       typeof hintShot === 'string' && hintShot.endsWith('screenshot-skill-menu.png'), String(hintShot));
 
+    /* ---- the model menu: Effort exactly where the reference puts it -----
+     * The chip opens its own menu — current model with a check, then Effort
+     * with its value on the right, then More models — and the chip repeats
+     * the pair beside the model name, the way the reference shows
+     * "Sonnet 5.5 Medium". These are the claims that are easy to break
+     * silently: order, placement, and the chip echoing the level. */
+    /* The + menu and the model menu must open from the exact same line: same
+       direction, same Y anchor. They cannot both be open, so measure each
+       while it is open — open +, record its anchor, dismiss it, then open the
+       model menu and compare against that record. */
+    const plusAnchor = await browser.evaluate(`
+      document.getElementById('attach-btn').click();
+      return new Promise((resolve) => setTimeout(() => {
+        const plus = document.getElementById('plus-menu');
+        const composer = document.querySelector('.composer');
+        const rect = plus.getBoundingClientRect();
+        const cRect = composer.getBoundingClientRect();
+        const wasOpen = !plus.hidden;
+        const opensDown = rect.top >= cRect.bottom - 12;
+        document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+        resolve({
+          wasOpen,
+          closed: plus.hidden,
+          opensDown,
+          height: Math.round(rect.height),
+          anchor: opensDown ? rect.top : rect.bottom
+        });
+      }, 250));
+    `);
+
+    const modelMenu = await browser.evaluate(`
+      const pill = document.getElementById('model-pill');
+      pill.click();
+      return new Promise((resolve) => setTimeout(() => {
+        const menu = document.getElementById('model-menu');
+        const rect = menu.getBoundingClientRect();
+        const cRect = document.querySelector('.composer').getBoundingClientRect();
+        const opensDown = rect.top >= cRect.bottom - 12;
+        resolve({
+          open: !menu.hidden,
+          aria: pill.getAttribute('aria-expanded'),
+          rows: [...menu.querySelectorAll(':scope > .mm-item')].map((n) => n.id),
+          effortValue: document.getElementById('mm-effort-value').textContent,
+          chipEffort: document.getElementById('model-effort').textContent,
+          modelTitle: document.getElementById('mm-model-title').textContent,
+          modelSub: document.getElementById('mm-model-sub').textContent,
+          checked: Boolean(menu.querySelector('#mm-model .mm-check')),
+          foot: document.getElementById('mm-foot').textContent,
+          opensDown,
+          height: Math.round(rect.height),
+          anchor: opensDown ? rect.top : rect.bottom,
+          // Horizontally it stays flush with the card's right edge, where the
+          // chip sits underneath it.
+          menuRight: rect.right,
+          composerRight: cRect.right,
+          menuPastCard: rect.right > cRect.right + 1
+        });
+      }, 250));
+    `);
+    check('the + menu opened and was dismissed for the comparison',
+      plusAnchor.wasOpen === true && plusAnchor.closed === true, JSON.stringify(plusAnchor));
+    check('the model menu opens from the exact same Y line as the + menu',
+      modelMenu.opensDown === plusAnchor.opensDown &&
+        Math.abs(modelMenu.anchor - plusAnchor.anchor) <= 1,
+      JSON.stringify({ plus: plusAnchor, modelAnchor: modelMenu.anchor, modelDown: modelMenu.opensDown }));
+    check('the model menu opens and answers to the chip',
+      modelMenu.open === true && modelMenu.aria === 'true' && modelMenu.menuPastCard === false,
+      JSON.stringify({ open: modelMenu.open, menuRight: modelMenu.menuRight, composerRight: modelMenu.composerRight }));
+    check('the menu reads model, then Effort, then More models — the reference order',
+      modelMenu.rows.join(',') === 'mm-model,mm-effort,mm-more', JSON.stringify(modelMenu.rows));
+    check('the current model row carries the check mark',
+      modelMenu.checked === true && String(modelMenu.modelTitle).length > 0,
+      JSON.stringify({ title: modelMenu.modelTitle, sub: modelMenu.modelSub }));
+    check('the Effort row shows the level on the right',
+      modelMenu.effortValue === 'Default' && modelMenu.chipEffort === 'Default',
+      JSON.stringify({ effort: modelMenu.effortValue, chip: modelMenu.chipEffort }));
+    check('the footer says what this endpoint does with effort',
+      /effort/i.test(String(modelMenu.foot)), String(modelMenu.foot).slice(0, 120));
+
+    const effortOpen = await browser.evaluate(`
+      document.getElementById('mm-effort').click();
+      const list = document.getElementById('mm-effort-list');
+      return {
+        shown: !list.hidden,
+        expanded: document.getElementById('mm-effort').getAttribute('aria-expanded'),
+        options: [...list.querySelectorAll('[data-effort]')].map((b) => b.dataset.effort).join(','),
+        wording: [...list.querySelectorAll('[data-effort]')].map((b) => b.textContent.trim()).join('|')
+      };
+    `);
+    check('Effort opens its levels in place, unset state labelled fully',
+      effortOpen.shown === true && effortOpen.expanded === 'true' &&
+        effortOpen.options === ',low,medium,high' && /Provider default/.test(effortOpen.wording),
+      JSON.stringify(effortOpen));
+
+    const effortChosen = await browser.evaluate(`
+      document.querySelector('[data-effort="high"]').click();
+      return new Promise((resolve) => {
+        let tries = 0;
+        const poll = () => {
+          const chip = document.getElementById('model-effort').textContent;
+          const value = document.getElementById('mm-effort-value').textContent;
+          const listHidden = document.getElementById('mm-effort-list').hidden;
+          const checked = document.querySelector('[data-effort="high"]').getAttribute('aria-checked');
+          if ((chip === 'High' && listHidden === true) || tries++ > 30) {
+            resolve({ chip, value, listHidden, checked });
+          } else setTimeout(poll, 100);
+        };
+        setTimeout(poll, 100);
+      });
+    `);
+    check('picking High repaints the chip, the row, and folds the list',
+      effortChosen.chip === 'High' && effortChosen.value === 'High' &&
+        effortChosen.listHidden === true && effortChosen.checked === 'true',
+      JSON.stringify(effortChosen));
+
+    const escapeModel = await browser.evaluate(`
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      return {
+        open: !document.getElementById('model-menu').hidden,
+        aria: document.getElementById('model-pill').getAttribute('aria-expanded')
+      };
+    `);
+    check('Escape puts the model menu away', escapeModel.open === false && escapeModel.aria === 'false',
+      JSON.stringify(escapeModel));
+
+    // Reopen for the screenshot: the menu at rest, with the level chosen —
+    // the state the reference image shows.
+    await browser.evaluate(`
+      document.getElementById('model-pill').click();
+      return !document.getElementById('model-menu').hidden;
+    `);
+    await sleep(300);
+    const modelMenuShot = await browser.screenshot(path.join(SHOT_DIR, 'screenshot-model-menu.png'));
+    check('a screenshot of the model menu was taken',
+      typeof modelMenuShot === 'string' && modelMenuShot.endsWith('screenshot-model-menu.png'),
+      String(modelMenuShot));
+    await browser.evaluate(`
+      document.getElementById('model-pill').click();
+      return document.getElementById('model-menu').hidden;
+    `);
+
     check('no exceptions from the hint or the skill menu', browser.exceptions.length === 0,
       browser.exceptions.join('\n'));
     check('no console errors from the hint or the skill menu', browser.consoleMessages.length === 0,
       JSON.stringify(browser.consoleMessages));
 
-    console.log(`\n  screenshots: ${welcomeShot}, ${turnShot}, ${modalShot}, ${connectionsShot}, ${darkShot}, ${freeShot}, ${setupShot}, ${failShot}, ${coworkShot}`);
+    console.log(`\n  screenshots: ${welcomeShot}, ${turnShot}, ${modalShot}, ${connectionsShot}, ${darkShot}, ${freeShot}, ${setupShot}, ${failShot}, ${coworkShot}, ${modelMenuShot}`);
   } finally {
     if (browser) await browser.close();
     server.kill();
